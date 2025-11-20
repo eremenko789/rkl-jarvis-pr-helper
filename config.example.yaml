@@ -11,10 +11,12 @@ jenkins:
   api_token: "jenkins-api-token"
   poll_interval: 15s
   timeout: 5m
+  insecure_skip_verify: false  # Установите true для игнорирования некорректных SSL-сертификатов
 
 gitea:
   base_url: "https://gitea.example.com/api/v1"
   token: "gitea-personal-access-token"
+  insecure_skip_verify: false  # Установите true для игнорирования некорректных SSL-сертификатов
 
 repositories:
   - name: "org/repo-one"

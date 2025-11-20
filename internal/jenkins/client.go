@@ -153,11 +153,31 @@ func (c *Client) CheckAccessibility(ctx context.Context) error {
 		req.SetBasicAuth(c.username, c.apiToken)
 	}
 
+	c.log.Info("Jenkins API request",
+		"method", http.MethodGet,
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"has_auth", c.username != "" || c.apiToken != "")
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.log.Error("failed to execute Jenkins request",
+			"err", err,
+			"url", endpoint,
+			"base_url", c.baseURL)
 		return fmt.Errorf("jenkins api request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	c.log.Info("Jenkins API response",
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"response_headers", resp.Header,
+		"response_body", string(respBody),
+		"response_body_length", len(respBody))
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("authentication failed: status %s", resp.Status)
@@ -201,7 +221,8 @@ func (c *Client) GetJobs(ctx context.Context, jobRoot string) ([]Job, error) {
 	query.Set("tree", "jobs[name,url,fullName]")
 	endpoint.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	fullURL := endpoint.String()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -210,15 +231,44 @@ func (c *Client) GetJobs(ctx context.Context, jobRoot string) ([]Job, error) {
 		req.SetBasicAuth(c.username, c.apiToken)
 	}
 
+	c.log.Info("Jenkins API request",
+		"method", http.MethodGet,
+		"url", fullURL,
+		"base_url", c.baseURL,
+		"job_root", jobRoot,
+		"has_auth", c.username != "" || c.apiToken != "")
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.log.Error("failed to execute Jenkins request",
+			"err", err,
+			"url", fullURL,
+			"base_url", c.baseURL,
+			"job_root", jobRoot)
 		return nil, fmt.Errorf("jenkins api request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 
+	c.log.Info("Jenkins API response",
+		"url", fullURL,
+		"base_url", c.baseURL,
+		"job_root", jobRoot,
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"response_headers", resp.Header,
+		"response_body", string(respBody),
+		"response_body_length", len(respBody))
+
 	if resp.StatusCode >= 400 {
+		c.log.Error("Jenkins API error",
+			"url", fullURL,
+			"base_url", c.baseURL,
+			"job_root", jobRoot,
+			"status_code", resp.StatusCode,
+			"status", resp.Status,
+			"response_body", string(respBody))
 		return nil, fmt.Errorf("jenkins api status: %s", resp.Status)
 	}
 
@@ -261,11 +311,35 @@ func (c *Client) CheckJobRootExists(ctx context.Context, jobRoot string) error {
 		req.SetBasicAuth(c.username, c.apiToken)
 	}
 
+	c.log.Info("Jenkins API request",
+		"method", http.MethodGet,
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"job_root", jobRoot,
+		"api_path", apiPath,
+		"has_auth", c.username != "" || c.apiToken != "")
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.log.Error("failed to execute Jenkins request",
+			"err", err,
+			"url", endpoint,
+			"base_url", c.baseURL,
+			"job_root", jobRoot)
 		return fmt.Errorf("jenkins api request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	c.log.Info("Jenkins API response",
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"job_root", jobRoot,
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"response_headers", resp.Header,
+		"response_body", string(respBody),
+		"response_body_length", len(respBody))
 
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("job root not found: status %s", resp.Status)

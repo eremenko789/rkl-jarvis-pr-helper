@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/example/gitea-jenkins-webhook/internal/config"
 	"github.com/example/gitea-jenkins-webhook/internal/gitea"
@@ -68,7 +69,8 @@ func checkCommand() {
 	ctx := context.Background()
 
 	// Stage 4: Check Jenkins accessibility
-	jClient := jenkins.NewClient(cfg.Jenkins.BaseURL, cfg.Jenkins.Username, cfg.Jenkins.APIToken, nil, logger)
+	jenkinsHTTPClient := config.NewHTTPClient(cfg.Jenkins.InsecureSkipVerify, 10*time.Second)
+	jClient := jenkins.NewClient(cfg.Jenkins.BaseURL, cfg.Jenkins.Username, cfg.Jenkins.APIToken, jenkinsHTTPClient, logger)
 	if err := jClient.CheckAccessibility(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Jenkins is not accessible at %s: %v\n", cfg.Jenkins.BaseURL, err)
 		result.errors++
@@ -78,7 +80,8 @@ func checkCommand() {
 	result.passed++
 
 	// Stage 5: Check Gitea accessibility
-	gClient := gitea.NewClient(cfg.Gitea.BaseURL, cfg.Gitea.Token, nil, logger)
+	giteaHTTPClient := config.NewHTTPClient(cfg.Gitea.InsecureSkipVerify, 10*time.Second)
+	gClient := gitea.NewClient(cfg.Gitea.BaseURL, cfg.Gitea.Token, giteaHTTPClient, logger)
 	if err := gClient.CheckAccessibility(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ Gitea is not accessible at %s: %v\n", cfg.Gitea.BaseURL, err)
 		result.errors++

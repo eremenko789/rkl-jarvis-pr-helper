@@ -66,11 +66,6 @@ func (c *Client) PostComment(ctx context.Context, repoFullName string, issueInde
 		return fmt.Errorf("marshal comment payload: %w", err)
 	}
 
-	c.log.Debug("Gitea request prepared",
-		"method", http.MethodPost,
-		"url", path,
-		"payload", string(data))
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(data))
 	if err != nil {
 		c.log.Error("failed to create request", "err", err)
@@ -79,28 +74,41 @@ func (c *Client) PostComment(ctx context.Context, repoFullName string, issueInde
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", c.token))
 
-	c.log.Debug("Gitea request headers",
+	// Логирование запроса
+	c.log.Info("Gitea API request",
+		"method", http.MethodPost,
+		"url", path,
+		"base_url", c.baseURL,
 		"content_type", req.Header.Get("Content-Type"),
-		"authorization", "token ***",
-		"url", path)
+		"request_body", string(data),
+		"request_body_length", len(data))
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		c.log.Error("failed to execute Gitea request", "err", err, "url", path)
+		c.log.Error("failed to execute Gitea request",
+			"err", err,
+			"url", path,
+			"base_url", c.baseURL)
 		return fmt.Errorf("execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	c.log.Debug("Gitea response received",
+
+	// Логирование ответа
+	c.log.Info("Gitea API response",
+		"url", path,
+		"base_url", c.baseURL,
 		"status_code", resp.StatusCode,
 		"status", resp.Status,
-		"headers", resp.Header,
-		"body", string(respBody),
-		"body_length", len(respBody))
+		"response_headers", resp.Header,
+		"response_body", string(respBody),
+		"response_body_length", len(respBody))
 
 	if resp.StatusCode >= 400 {
 		c.log.Error("Gitea API error",
+			"url", path,
+			"base_url", c.baseURL,
 			"status_code", resp.StatusCode,
 			"status", resp.Status,
 			"response_body", string(respBody))
@@ -136,11 +144,28 @@ func (c *Client) CheckAccessibility(ctx context.Context) error {
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", c.token))
 
+	c.log.Info("Gitea API request",
+		"method", http.MethodGet,
+		"url", endpoint,
+		"base_url", c.baseURL)
+
 	resp, err := c.client.Do(req)
 	if err != nil {
+		c.log.Error("failed to execute Gitea request",
+			"err", err,
+			"url", endpoint,
+			"base_url", c.baseURL)
 		return fmt.Errorf("gitea api request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	c.log.Info("Gitea API response",
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"response_body", string(respBody))
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("authentication failed: status %s", resp.Status)
@@ -168,11 +193,30 @@ func (c *Client) GetRepository(ctx context.Context, owner, repo string) error {
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", c.token))
 
+	c.log.Info("Gitea API request",
+		"method", http.MethodGet,
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"owner", owner,
+		"repo", repo)
+
 	resp, err := c.client.Do(req)
 	if err != nil {
+		c.log.Error("failed to execute Gitea request",
+			"err", err,
+			"url", endpoint,
+			"base_url", c.baseURL)
 		return fmt.Errorf("gitea api request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	c.log.Info("Gitea API response",
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"response_body", string(respBody))
 
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("repository not found: status %s", resp.Status)

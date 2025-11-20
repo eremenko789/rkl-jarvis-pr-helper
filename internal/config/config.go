@@ -2,8 +2,10 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -20,17 +22,19 @@ type ServerConfig struct {
 
 // JenkinsConfig содержит настройки подключения к Jenkins.
 type JenkinsConfig struct {
-	BaseURL      string        `yaml:"base_url"`
-	Username     string        `yaml:"username"`
-	APIToken     string        `yaml:"api_token"`
-	PollInterval time.Duration `yaml:"poll_interval"`
-	Timeout      time.Duration `yaml:"timeout"`
+	BaseURL            string        `yaml:"base_url"`
+	Username           string        `yaml:"username"`
+	APIToken           string        `yaml:"api_token"`
+	PollInterval       time.Duration `yaml:"poll_interval"`
+	Timeout            time.Duration `yaml:"timeout"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"` // Игнорировать некорректные SSL-сертификаты
 }
 
 // GiteaConfig содержит настройки подключения к Gitea.
 type GiteaConfig struct {
-	BaseURL string `yaml:"base_url"`
-	Token   string `yaml:"token"`
+	BaseURL            string `yaml:"base_url"`
+	Token              string `yaml:"token"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"` // Игнорировать некорректные SSL-сертификаты
 }
 
 // RepositoryRule определяет правила обработки событий для конкретного репозитория.
@@ -155,4 +159,23 @@ func (c *Config) GetRepositoryRule(fullName string) (RepositoryRule, bool) {
 	}
 	repo, ok := c.RepoIndex[fullName]
 	return repo.Rule, ok
+}
+
+// NewHTTPClient создает новый HTTP клиент с настройками TLS.
+// Если insecureSkipVerify равен true, отключает проверку SSL-сертификатов.
+func NewHTTPClient(insecureSkipVerify bool, timeout time.Duration) *http.Client {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: insecureSkipVerify,
+		},
+	}
+
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+	}
 }

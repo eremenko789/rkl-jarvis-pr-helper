@@ -38,16 +38,19 @@ run-server:
 	go run ./cmd/webhook-service run -config ./config.yaml --debug
 
 run-check:
+	go run ./cmd/webhook-service check -config ./config.yaml
+
+run-check-debug:
 	go run ./cmd/webhook-service check -config ./config.yaml --debug
 
 run-build: build
 	./bin/webhook-service -config ./config.yaml
 
 docker-build:
-	docker build -t $(IMAGE) .
+	docker build --network host -t $(IMAGE) .
 
 docker-run: docker-build
 	docker run --rm -p 8081:8081 -v $(PWD)/config.example.yaml:/etc/webhook/config.yaml $(IMAGE)
 
 docker-compose:
-	docker compose up --build
+	docker compose up -d --build

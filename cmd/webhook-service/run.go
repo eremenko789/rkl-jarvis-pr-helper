@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/example/gitea-jenkins-webhook/internal/config"
 	"github.com/example/gitea-jenkins-webhook/internal/gitea"
@@ -38,8 +39,11 @@ func runCommand() {
 		"queue_size", cfg.Server.QueueSize,
 		"repositories_count", len(cfg.Repositories))
 
-	jClient := jenkins.NewClient(cfg.Jenkins.BaseURL, cfg.Jenkins.Username, cfg.Jenkins.APIToken, nil, logger)
-	gClient := gitea.NewClient(cfg.Gitea.BaseURL, cfg.Gitea.Token, nil, logger)
+	jenkinsHTTPClient := config.NewHTTPClient(cfg.Jenkins.InsecureSkipVerify, 10*time.Second)
+	jClient := jenkins.NewClient(cfg.Jenkins.BaseURL, cfg.Jenkins.Username, cfg.Jenkins.APIToken, jenkinsHTTPClient, logger)
+	
+	giteaHTTPClient := config.NewHTTPClient(cfg.Gitea.InsecureSkipVerify, 10*time.Second)
+	gClient := gitea.NewClient(cfg.Gitea.BaseURL, cfg.Gitea.Token, giteaHTTPClient, logger)
 
 	logger.Info("initializing processor and server")
 	proc := processor.New(cfg, jClient, gClient, logger)
