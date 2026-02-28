@@ -2,6 +2,7 @@ package processor_test
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"sync"
 	"testing"
@@ -248,6 +249,13 @@ func (noopGitea) PostComment(context.Context, string, int64, string) error {
 	return nil
 }
 
+// errorGitea возвращает ошибку из PostComment (для покрытия ветки обработки ошибки).
+type errorGitea struct{ err error }
+
+func (e errorGitea) PostComment(context.Context, string, int64, string) error {
+	return e.err
+}
+
 type blockingStubJenkins struct {
 	unblock chan struct{}
 }
@@ -388,6 +396,121 @@ func TestProcessor_ProcessEvent_EmptyRepoName(t *testing.T) {
 	gClient.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("expected no comments for empty repo name, got %d", n)
+	}
+}
+
+func TestProcessor_WaitForJobReturnsError(t *testing.T) {
+	// Покрывает ветку "else if err != nil" — jobFound != nil и err != nil (редкий кейс)
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{
+			BaseURL:      "https://j",
+			PollInterval: time.Millisecond,
+			Timeout:      time.Second,
+		},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: `^x$`}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	// Возвращаем и джобу, и ошибку — процессор залогирует "error waiting for jenkins job", затем постит success-комментарий
+	jClient := stubJenkins{job: &jenkins.Job{Name: "x", URL: "https://j/x"}, err: errors.New("jenkins unreachable")}
+	gClient := newStubGitea(t)
+	gClient.wg.Add(1)
+	proc := processor.New(cfg, jClient, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: "org/repo"},
+		PullRequest: webhook.PullRequest{Number: 1},
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	waitWithTimeout(t, &gClient.wg, 2*time.Second)
+	gClient.mu.Lock()
+	n := len(gClient.comments)
+	gClient.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("expected 1 comment when WaitForJob returns job+error, got %d", n)
+	}
+}
+
+func TestProcessor_PostCommentFails(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{
+			BaseURL:      "https://jenkins.example.com",
+			PollInterval: time.Millisecond,
+			Timeout:      time.Second,
+		},
+		Gitea: config.GiteaConfig{BaseURL: "https://gitea.example.com", Token: "t"},
+		Repositories: []config.RepositoryRule{
+			{Name: "org/repo", JobPattern: `^job-{{ .Number }}$`},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	jClient := stubJenkins{job: &jenkins.Job{Name: "job-7", URL: "https://j/job-7"}}
+	gClient := errorGitea{err: errors.New("gitea api down")}
+	proc := processor.New(cfg, jClient, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: "org/repo"},
+		PullRequest: webhook.PullRequest{Number: 7},
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	// Дам воркеру время обработать; процессор логирует ошибку и не паникует
+	time.Sleep(500 * time.Millisecond)
+}
+
+func TestProcessor_InvalidCommentTemplate(t *testing.T) {
+	// Шаблон с синтаксической ошибкой — executeTemplate возвращает ошибку, PostComment не вызывается
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{
+			BaseURL:      "https://j",
+			PollInterval: time.Millisecond,
+			Timeout:      time.Second,
+		},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{
+			{Name: "org/repo", JobPattern: `^x$`, SuccessCommentTemplate: "{{ .Number "}, // unclosed
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	gClient := newStubGitea(t)
+	jClient := stubJenkins{job: &jenkins.Job{Name: "x", URL: "https://j/x"}}
+	proc := processor.New(cfg, jClient, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: "org/repo"},
+		PullRequest: webhook.PullRequest{Number: 1},
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	gClient.mu.Lock()
+	n := len(gClient.comments)
+	gClient.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("expected no comment when template invalid, got %d", n)
 	}
 }
 
