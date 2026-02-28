@@ -7,7 +7,9 @@
 | Команда | Описание |
 |---------|----------|
 | `make build` | Сборка бинарника в `bin/webhook-service`. |
-| `make test` | Запуск тестов с `-race`. |
+| `make test` | Запуск юнит-тестов с `-race` (internal, pkg). |
+| `make test-unit` | То же, что `make test`. |
+| `make test-integration` | Запуск интеграционных тестов (build tag `integration`); требуются переменные окружения, см. [docs/test/integration-requests.md](test/integration-requests.md). |
 | `make cover` | Тесты с покрытием: `coverage.out` и вызов `go tool cover -func=coverage.out`. |
 | `make lint` | `go vet ./...`. |
 | `make fmt` | `gofmt -w` по всем Go-файлам. |
@@ -38,10 +40,11 @@ Workflow: [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
 ## Тесты и покрытие
 
-- Тесты: `go test -race ./...` (цель `make test`).
-- Покрытие: `go test -covermode=atomic -coverprofile=coverage.out ./...` и `go tool cover -func=coverage.out` (цель `make cover`). Файл `coverage.out` загружается в CI как артефакт; локально можно смотреть HTML: `go tool cover -html=coverage.out`.
+- **Юнит-тесты:** `make test` или `go test -race ./internal/... ./pkg/...`. Покрытие: `make cover` (генерирует `coverage.out`). Файл `coverage.out` загружается в CI как артефакт; локально: `go tool cover -html=coverage.out`.
+- **Интеграционные тесты:** тесты с build tag `integration` в `internal/jenkins/integration_test.go` и `internal/gitea/integration_test.go`. Запуск: `make test-integration`. Без переменных окружения (JENKINS_BASE_URL, GITEA_BASE_URL, GITEA_TOKEN) тесты пропускаются (skip). Примеры запросов и условия запуска: [docs/test/integration-requests.md](test/integration-requests.md).
+- **Документация по тестам:** вся в поддиректории [docs/test/](test/): оглавление — [test/README.md](test/README.md); тест-планы по функциям — [test/test-plans.md](test/test-plans.md).
 
-Тесты есть в `internal/config/config_test.go`, `internal/processor/processor_test.go`, `internal/jenkins/client_test.go`.
+Файлы тестов: `internal/config/config_test.go`, `internal/server/server_test.go`, `internal/processor/processor_test.go`, `internal/jenkins/client_test.go`, `internal/gitea/client_test.go`, `pkg/webhook/types_test.go`.
 
 ## Релизы и артефакты
 
