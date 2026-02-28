@@ -123,8 +123,8 @@ func TestGetJobs_Success(t *testing.T) {
 		{Name: "job-b", URL: "http://j/job-b", FullName: "job-b"},
 	}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/json" && r.URL.RawQuery == "" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
+		if r.URL.Path != "/api/json" || r.URL.RawQuery == "" {
+			t.Errorf("unexpected path or query: path=%s rawQuery=%s", r.URL.Path, r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"jobs": jobs})
 	}))
