@@ -2,6 +2,7 @@ package gitea_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,13 @@ import (
 
 	"github.com/example/gitea-jenkins-webhook/internal/gitea"
 )
+
+// errTransport возвращает ошибку при любом RoundTrip.
+type errTransport struct{ err error }
+
+func (e errTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, e.err
+}
 
 func TestPostComment_OK(t *testing.T) {
 	var path, auth, body string
@@ -69,6 +77,22 @@ func TestPostComment_ServerError(t *testing.T) {
 	}
 }
 
+func TestPostComment_DoFails(t *testing.T) {
+	wantErr := errors.New("network failure")
+	client := gitea.NewClient("http://localhost", "t", &http.Client{
+		Transport: errTransport{err: wantErr},
+		Timeout:   time.Second,
+	}, nil)
+	ctx := context.Background()
+	err := client.PostComment(ctx, "owner/repo", 1, "x")
+	if err == nil {
+		t.Fatal("expected error when Do fails")
+	}
+	if !errors.Is(err, wantErr) && !strings.Contains(err.Error(), wantErr.Error()) {
+		t.Errorf("expected error containing %q, got %v", wantErr.Error(), err)
+	}
+}
+
 func TestCheckAccessibility_OK(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/user" {
@@ -95,6 +119,45 @@ func TestCheckAccessibility_Unauthorized(t *testing.T) {
 	ctx := context.Background()
 	if err := client.CheckAccessibility(ctx); err == nil {
 		t.Fatal("expected error for 401")
+	}
+}
+
+func TestCheckAccessibility_Forbidden(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckAccessibility(ctx); err == nil {
+		t.Fatal("expected error for 403")
+	}
+}
+
+func TestCheckAccessibility_NotFound(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckAccessibility(ctx); err == nil {
+		t.Fatal("expected error for 404")
+	}
+}
+
+func TestCheckAccessibility_ServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckAccessibility(ctx); err == nil {
+		t.Fatal("expected error for 500")
 	}
 }
 
@@ -127,6 +190,45 @@ func TestGetRepository_NotFound(t *testing.T) {
 	}
 }
 
+func TestGetRepository_Forbidden(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.GetRepository(ctx, "owner", "repo"); err == nil {
+		t.Fatal("expected error for 403")
+	}
+}
+
+func TestGetRepository_Unauthorized(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.GetRepository(ctx, "owner", "repo"); err == nil {
+		t.Fatal("expected error for 401")
+	}
+}
+
+func TestGetRepository_ServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.GetRepository(ctx, "owner", "repo"); err == nil {
+		t.Fatal("expected error for 500")
+	}
+}
+
 func TestNewClient_TrimTrailingSlash(t *testing.T) {
 	var receivedPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -146,5 +248,33 @@ func TestNewClient_TrimTrailingSlash(t *testing.T) {
 	}
 	if strings.Contains(receivedPath, "//") {
 		t.Fatalf("path should not contain double slash: %s", receivedPath)
+	}
+}
+
+func TestNewClient_NilLogger(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	// NewClient with nil logger must not panic and must use slog.Default()
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckAccessibility(ctx); err != nil {
+		t.Fatalf("CheckAccessibility with nil logger: %v", err)
+	}
+}
+
+func TestNewClient_NilHTTPClient(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	// NewClient with nil httpClient must use default client with timeout
+	client := gitea.NewClient(ts.URL, "t", nil, nil)
+	ctx := context.Background()
+	if err := client.CheckAccessibility(ctx); err != nil {
+		t.Fatalf("CheckAccessibility with nil httpClient: %v", err)
 	}
 }

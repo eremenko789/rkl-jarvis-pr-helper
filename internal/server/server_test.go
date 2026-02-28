@@ -3,9 +3,14 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +18,13 @@ import (
 	"github.com/example/gitea-jenkins-webhook/internal/jenkins"
 	"github.com/example/gitea-jenkins-webhook/internal/processor"
 )
+
+// errReader возвращает ошибку при Read (для покрытия ветки ошибки чтения body).
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) {
+	return 0, e.err
+}
 
 func TestHandleHealth_OK(t *testing.T) {
 	cfg := &config.Config{
@@ -256,6 +268,27 @@ func TestHandleWebhook_UnsupportedEvent(t *testing.T) {
 	}
 }
 
+func TestHandleWebhook_ReadBodyError(t *testing.T) {
+	cfg := &config.Config{Server: config.ServerConfig{ListenAddr: ":0"}}
+	cfg.Jenkins.BaseURL = "https://j"
+	cfg.Gitea.BaseURL = "https://g"
+	cfg.Gitea.Token = "t"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	proc := processor.New(cfg, blockingJenkins{}, &nopGitea{}, nil)
+	srv := New(cfg, proc, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", errReader{err: errors.New("read fail")})
+	req.Header.Set("X-Gitea-Event", "pull_request")
+	req.Body = io.NopCloser(errReader{err: errors.New("read fail")})
+	rec := httptest.NewRecorder()
+	srv.handleWebhook(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when body read fails, got %d", rec.Code)
+	}
+}
+
 func TestHandleWebhook_InvalidJSON(t *testing.T) {
 	cfg := &config.Config{Server: config.ServerConfig{ListenAddr: ":0"}}
 	cfg.Jenkins.BaseURL = "https://j"
@@ -273,6 +306,43 @@ func TestHandleWebhook_InvalidJSON(t *testing.T) {
 	srv.handleWebhook(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestRun_ListenAndServeError(t *testing.T) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	cfg := &config.Config{
+		Server:  config.ServerConfig{ListenAddr: ":" + strconv.Itoa(port)},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	proc := processor.New(cfg, blockingJenkins{}, &nopGitea{}, nil)
+	srv := New(cfg, proc, nil)
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- srv.Run(context.Background())
+	}()
+
+	select {
+	case err := <-runErr:
+		if err == nil {
+			t.Fatal("expected Run to return error when ListenAndServe fails")
+		}
+		if !strings.Contains(err.Error(), "address already in use") && !strings.Contains(err.Error(), "bind") {
+			t.Logf("Run returned error (expected): %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return within 5s")
 	}
 }
 

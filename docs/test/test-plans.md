@@ -77,8 +77,17 @@
 | Негативный | Секрет задан, подпись отсутствует → 401 | `TestHandleWebhook_MissingSignature` |
 | Негативный | Event не pull_request → 400 | `TestHandleWebhook_UnsupportedEvent` |
 | Негативный | Невалидный JSON → 400 | `TestHandleWebhook_InvalidJSON` |
-| Негативный | Enqueue возвращает ошибку → 503 | `TestHandleWebhook_QueueFull` |
+| Негативный | Ошибка чтения тела запроса → 400 | `TestHandleWebhook_ReadBodyError` |
+| Негативный | Enqueue возвращает ошибку → 503 | `TestHandleWebhook_EnqueueFails` |
 | Граничный | Пустое тело при event pull_request → 400 (или 202 с пустым payload — по реализации) | `TestHandleWebhook_EmptyBody` |
+
+### Run
+
+**Назначение:** запустить процессор и HTTP-сервер; при ошибке ListenAndServe вернуть ошибку.
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Негативный | Порт занят (ListenAndServe ошибка) → Run возвращает ошибку | `TestRun_ListenAndServeError` |
 
 ### verifySignature, computeSignature, normalizeSignature
 
@@ -129,7 +138,9 @@
 | Граничный | action synchronized/closed → Gitea не вызывается | `TestProcessor_ProcessEvent_IgnoredAction` |
 | Граничный | repository.full_name пустой → выход без паники | `TestProcessor_ProcessEvent_EmptyRepoName` |
 | Граничный | Невалидный job_pattern (некомпилируемый regex после шаблона) → выход без паники, без комментария | `TestProcessor_ProcessEvent_InvalidJobPattern` |
-| Граничный | Ошибка шаблона комментария → без повторного поста | через шаблон с синтаксической ошибкой |
+| Граничный | Ошибка шаблона комментария (невалидный синтаксис) → без комментария | `TestProcessor_InvalidCommentTemplate` |
+| Граничный | PostComment возвращает ошибку → логирование, без паники | `TestProcessor_PostCommentFails` |
+| Граничный | WaitForJob возвращает (job, err) — логирование "error waiting for jenkins job", затем success comment | `TestProcessor_WaitForJobReturnsError` |
 
 ### executeTemplate
 
@@ -153,8 +164,17 @@
 | Основной | jobRoot пустой — запрос к /api/json, список джоб | уже частично в WaitForJob |
 | Основной | jobRoot задан — путь /job/.../api/json, список джоб | `TestWaitForJobWithJobRoot` |
 | Основной | Пустой список jobs — 200, jobs: [] | через httptest |
-| Негативный | 401/404/500 → ошибка | `TestGetJobs_Unauthorized`, `TestGetJobs_NotFound`, `TestGetJobs_ServerError` |
+| Негативный | 401/400 → ошибка | `TestGetJobs_Unauthorized`, `TestGetJobs_StatusBadRequest` |
+| Негативный | Ошибка Do (сеть) → ошибка | `TestGetJobs_DoFails` |
 | Негативный | Невалидный JSON в ответе → ошибка | `TestGetJobs_InvalidJSON` |
+
+### NewClient (jenkins)
+
+**Назначение:** создать клиент; при nil httpClient/logger — дефолты.
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Граничный | httpClient == nil → клиент с таймаутом 10s | `TestNewClient_NilHTTPClient` |
 
 ### CheckAccessibility
 
@@ -163,7 +183,7 @@
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|
 | Основной | 200 → nil | `TestCheckAccessibility_OK` |
-| Негативный | 401/403/404/5xx → ошибка | `TestCheckAccessibility_Unauthorized` и др. |
+| Негативный | 401/403/404/5xx → ошибка | `TestCheckAccessibility_Unauthorized`, `TestCheckAccessibility_Forbidden`, `TestCheckAccessibility_NotFound`, `TestCheckAccessibility_ServerError` |
 
 ### CheckJobRootExists
 
@@ -173,7 +193,7 @@
 |-----|-----------|------|
 | Основной | jobRoot пустой → nil | `TestCheckJobRootExists_Empty` |
 | Основной | Путь существует, 200 → nil | `TestCheckJobRootExists_OK` |
-| Негативный | 404/403/5xx → ошибка | `TestCheckJobRootExists_NotFound` и др. |
+| Негативный | 404/403/5xx → ошибка | `TestCheckJobRootExists_NotFound`, `TestCheckJobRootExists_Forbidden`, `TestCheckJobRootExists_ServerError` |
 
 ### findJob (косвенно через WaitForJob)
 
@@ -193,6 +213,7 @@
 |-----|-----------|------|
 | Основной | Джоба появляется в течение таймаута → job | `TestWaitForJob` |
 | Основной | Таймаут — джоба не найдена → ошибка | `TestWaitForJobTimeout` |
+| Граничный | Джобы есть, но ни одна не совпадает с паттерном → таймаут | `TestWaitForJob_NoMatch` |
 | Основной | job_root непустой — правильный путь | `TestWaitForJobWithJobRoot` |
 
 ---
@@ -201,11 +222,13 @@
 
 ### NewClient
 
-**Назначение:** создать клиент; baseURL без завершающего слэша.
+**Назначение:** создать клиент; baseURL без завершающего слэша; при nil httpClient/logger — дефолты.
 
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|
-| Граничный | baseURL с завершающим слэшем → обрезка (проверка через путь в PostComment) | `TestNewClient_TrimTrailingSlash` или через PostComment |
+| Граничный | baseURL с завершающим слэшем → обрезка (проверка через путь в PostComment) | `TestNewClient_TrimTrailingSlash` |
+| Граничный | logger == nil → slog.Default() | `TestNewClient_NilLogger` |
+| Граничный | httpClient == nil → клиент с таймаутом 10s | `TestNewClient_NilHTTPClient` |
 
 ### splitRepoFullName
 
@@ -226,7 +249,8 @@
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|
 | Основной | 200/201 → nil | `TestPostComment_OK` |
-| Негативный | 400/401/404/500 → ошибка | `TestPostComment_BadRequest` и др. |
+| Негативный | 500 → ошибка | `TestPostComment_ServerError` |
+| Негативный | Ошибка Do (сеть) → ошибка | `TestPostComment_DoFails` |
 | Негативный | Неверный repoFullName → ошибка от split | `TestPostComment_InvalidRepoName` |
 
 ### CheckAccessibility
@@ -236,7 +260,7 @@
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|
 | Основной | 200 → nil | `TestCheckAccessibility_OK` |
-| Негативный | 401/403/404/5xx → ошибка | `TestCheckAccessibility_Unauthorized` и др. |
+| Негативный | 401/403/404/5xx → ошибка | `TestCheckAccessibility_Unauthorized`, `TestCheckAccessibility_Forbidden`, `TestCheckAccessibility_NotFound`, `TestCheckAccessibility_ServerError` |
 
 ### GetRepository
 
@@ -245,7 +269,7 @@
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|
 | Основной | 200 → nil | `TestGetRepository_OK` |
-| Негативный | 404/403/401/5xx → ошибка | `TestGetRepository_NotFound` и др. |
+| Негативный | 404/403/401/5xx → ошибка | `TestGetRepository_NotFound`, `TestGetRepository_Forbidden`, `TestGetRepository_Unauthorized`, `TestGetRepository_ServerError` |
 
 ---
 

@@ -3,15 +3,24 @@ package jenkins_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/example/gitea-jenkins-webhook/internal/jenkins"
 )
+
+// errTransport возвращает ошибку при любом RoundTrip.
+type errTransport struct{ err error }
+
+func (e errTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, e.err
+}
 
 func TestWaitForJob(t *testing.T) {
 	var callCount int32
@@ -56,6 +65,25 @@ func TestWaitForJobTimeout(t *testing.T) {
 	_, err := client.WaitForJob(ctx, re, "", 300*time.Millisecond, 100*time.Millisecond)
 	if err == nil {
 		t.Fatalf("expected timeout error")
+	}
+}
+
+// TestWaitForJob_NoMatch покрывает ветку findJob: джобы есть, но ни один не совпадает с паттерном.
+func TestWaitForJob_NoMatch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jobs := []jenkins.Job{
+			{Name: "other-job", URL: "http://j/other", FullName: "other-job"},
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jobs": jobs})
+	}))
+	defer ts.Close()
+
+	client := jenkins.NewClient(ts.URL, "", "", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	re := regexp.MustCompile(`target-job`)
+	_, err := client.WaitForJob(ctx, re, "", 400*time.Millisecond, 100*time.Millisecond)
+	if err == nil {
+		t.Fatalf("expected timeout when no job matches")
 	}
 }
 
@@ -179,6 +207,36 @@ func TestGetJobs_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestGetJobs_DoFails(t *testing.T) {
+	wantErr := errors.New("connection refused")
+	client := jenkins.NewClient("http://localhost", "", "", &http.Client{
+		Transport: errTransport{err: wantErr},
+		Timeout:   time.Second,
+	}, nil)
+	ctx := context.Background()
+	_, err := client.GetJobs(ctx, "")
+	if err == nil {
+		t.Fatal("expected error when Do fails")
+	}
+	if !strings.Contains(err.Error(), wantErr.Error()) {
+		t.Errorf("expected error containing %q, got %v", wantErr.Error(), err)
+	}
+}
+
+func TestGetJobs_StatusBadRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer ts.Close()
+
+	client := jenkins.NewClient(ts.URL, "", "", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	_, err := client.GetJobs(ctx, "")
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+}
+
 func TestCheckAccessibility_OK(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -219,6 +277,32 @@ func TestCheckAccessibility_NotFound(t *testing.T) {
 	}
 }
 
+func TestCheckAccessibility_Forbidden(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+
+	client := jenkins.NewClient(ts.URL, "", "", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckAccessibility(ctx); err == nil {
+		t.Fatal("expected error for 403")
+	}
+}
+
+func TestCheckAccessibility_ServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	client := jenkins.NewClient(ts.URL, "", "", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckAccessibility(ctx); err == nil {
+		t.Fatal("expected error for 500")
+	}
+}
+
 func TestCheckJobRootExists_Empty(t *testing.T) {
 	client := jenkins.NewClient("http://example.com", "", "", &http.Client{Timeout: time.Second}, nil)
 	ctx := context.Background()
@@ -253,6 +337,50 @@ func TestCheckJobRootExists_NotFound(t *testing.T) {
 	ctx := context.Background()
 	if err := client.CheckJobRootExists(ctx, "folder"); err == nil {
 		t.Fatal("expected error for 404")
+	}
+}
+
+func TestCheckJobRootExists_Forbidden(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+
+	client := jenkins.NewClient(ts.URL, "", "", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckJobRootExists(ctx, "folder"); err == nil {
+		t.Fatal("expected error for 403")
+	}
+}
+
+func TestCheckJobRootExists_ServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	client := jenkins.NewClient(ts.URL, "", "", &http.Client{Timeout: time.Second}, nil)
+	ctx := context.Background()
+	if err := client.CheckJobRootExists(ctx, "folder"); err == nil {
+		t.Fatal("expected error for 500")
+	}
+}
+
+func TestNewClient_NilHTTPClient(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []jenkins.Job{}})
+	}))
+	defer ts.Close()
+
+	// NewClient with nil httpClient must use default client with timeout
+	client := jenkins.NewClient(ts.URL, "", "", nil, nil)
+	ctx := context.Background()
+	got, err := client.GetJobs(ctx, "")
+	if err != nil {
+		t.Fatalf("GetJobs with nil httpClient: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty jobs, got %d", len(got))
 	}
 }
 
