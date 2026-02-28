@@ -202,8 +202,7 @@ func TestProcessor_EnqueueNotStarted(t *testing.T) {
 }
 
 func TestProcessor_EnqueueQueueFull(t *testing.T) {
-	// QueueSize 2, 1 worker: enqueue 2 events -> worker takes first and blocks, second sits in queue.
-	// Third enqueue -> queue full.
+	// QueueSize 2, 1 worker: 1-й забирает воркер и блокирует в WaitForJob; 2-й и 3-й помещаются в буфер; 4-й — очередь полная.
 	cfg := &config.Config{
 		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 2},
 		Jenkins: config.JenkinsConfig{BaseURL: "https://j", Timeout: time.Hour},
@@ -215,7 +214,6 @@ func TestProcessor_EnqueueQueueFull(t *testing.T) {
 	}
 	blockChan := make(chan struct{})
 	blockingStub := &blockingStubJenkins{unblock: blockChan}
-	// Use noop gitea so we don't need WaitGroup (number of events that complete is timing-dependent)
 	gClient := &noopGitea{}
 	proc := processor.New(cfg, blockingStub, gClient, nil)
 	proc.Start()
@@ -229,17 +227,20 @@ func TestProcessor_EnqueueQueueFull(t *testing.T) {
 	if err := proc.Enqueue(evt); err != nil {
 		t.Fatalf("first enqueue: %v", err)
 	}
+	// Даём воркеру время забрать первое событие и заблокироваться в WaitForJob.
+	time.Sleep(50 * time.Millisecond)
 	if err := proc.Enqueue(evt); err != nil {
 		t.Fatalf("second enqueue: %v", err)
 	}
-	// Queue now has 1 in channel (second event), 1 in worker (first). Buffer 2 full.
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("third enqueue: %v", err)
+	}
 	err := proc.Enqueue(evt)
 	if err == nil {
 		close(blockChan)
 		t.Fatal("expected error when queue full")
 	}
 	close(blockChan)
-	// Allow workers to finish so Stop() doesn't hang
 	time.Sleep(500 * time.Millisecond)
 }
 

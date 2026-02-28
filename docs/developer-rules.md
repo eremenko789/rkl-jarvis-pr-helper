@@ -7,15 +7,16 @@
 | Команда | Описание |
 |---------|----------|
 | `make build` | Сборка бинарника в `bin/webhook-service`. |
-| `make test` | Запуск юнит-тестов с `-race` (internal, pkg). |
-| `make test-unit` | То же, что `make test`. |
+| `make test` | Запуск юнит- и интеграционных тестов: `test-unit` + `test-integration`. |
+| `make test-unit` | Только юнит-тесты с `-race` по `./internal/...` и `./pkg/...`. |
 | `make test-integration` | Запуск интеграционных тестов (build tag `integration`); требуются переменные окружения, см. [docs/test/integration-requests.md](test/integration-requests.md). |
-| `make cover` | Тесты с покрытием: `coverage.out` и вызов `go tool cover -func=coverage.out`. |
+| `make cover` | Юнит-тесты с покрытием: `coverage.out` и вызов `go tool cover -func=coverage.out`. |
+| `make cover-html` | Генерация HTML-отчёта покрытия `coverage.html` из `coverage.out` (запускает сбор `coverage.out`, если его ещё нет). |
 | `make lint` | `go vet ./...`. |
 | `make fmt` | `gofmt -w` по всем Go-файлам. |
 | `make tidy` | `go mod tidy`. |
 | `make ci` | Последовательно: tidy, lint, test, build, cover. |
-| `make clean` | Удаление `bin/` и `coverage.out`. |
+| `make clean` | Удаление `bin/`, `coverage.out` и `coverage.html`. |
 | `make docker-build` | Сборка Docker-образа. |
 | `make docker-run` | Сборка и запуск контейнера (порт 8081, монтирование config.example.yaml). |
 | `make docker-compose` | `docker compose up -d --build`. |
@@ -40,7 +41,7 @@ Workflow: [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
 ## Тесты и покрытие
 
-- **Юнит-тесты:** `make test` или `go test -race ./internal/... ./pkg/...`. Покрытие: `make cover` (генерирует `coverage.out`). Файл `coverage.out` загружается в CI как артефакт; локально: `go tool cover -html=coverage.out`.
+- **Юнит-тесты:** `make test-unit` (или `go test -race ./internal/... ./pkg/...`). Покрытие: `make cover` (генерирует `coverage.out`); HTML-отчёт: `make cover-html` → `coverage.html`. Файл `coverage.out` загружается в CI как артефакт.
 - **Интеграционные тесты:** тесты с build tag `integration` в `internal/jenkins/integration_test.go` и `internal/gitea/integration_test.go`. Запуск: `make test-integration`. Без переменных окружения (JENKINS_BASE_URL, GITEA_BASE_URL, GITEA_TOKEN) тесты пропускаются (skip). Примеры запросов и условия запуска: [docs/test/integration-requests.md](test/integration-requests.md).
 - **Документация по тестам:** вся в поддиректории [docs/test/](test/): оглавление — [test/README.md](test/README.md); тест-планы по функциям — [test/test-plans.md](test/test-plans.md).
 
