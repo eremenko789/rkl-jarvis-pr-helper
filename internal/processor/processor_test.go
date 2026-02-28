@@ -203,6 +203,7 @@ func TestProcessor_EnqueueNotStarted(t *testing.T) {
 
 func TestProcessor_EnqueueQueueFull(t *testing.T) {
 	// QueueSize 2, 1 worker: 1-й забирает воркер и блокирует в WaitForJob; 2-й и 3-й помещаются в буфер; 4-й — очередь полная.
+	// Синхронизация через entered: ждём входа воркера в WaitForJob (значит событие #1 уже вынуто из канала), затем заполняем буфер 2 и 3.
 	cfg := &config.Config{
 		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 2},
 		Jenkins: config.JenkinsConfig{BaseURL: "https://j", Timeout: time.Hour},
@@ -213,7 +214,8 @@ func TestProcessor_EnqueueQueueFull(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	blockChan := make(chan struct{})
-	blockingStub := &blockingStubJenkins{unblock: blockChan}
+	entered := make(chan struct{})
+	blockingStub := &blockingStubJenkins{unblock: blockChan, entered: entered}
 	gClient := &noopGitea{}
 	proc := processor.New(cfg, blockingStub, gClient, nil)
 	proc.Start()
@@ -227,8 +229,13 @@ func TestProcessor_EnqueueQueueFull(t *testing.T) {
 	if err := proc.Enqueue(evt); err != nil {
 		t.Fatalf("first enqueue: %v", err)
 	}
-	// Даём воркеру время забрать первое событие и заблокироваться в WaitForJob.
-	time.Sleep(50 * time.Millisecond)
+	// Ждём, пока воркер заберёт событие #1 и войдёт в WaitForJob (буфер очереди пуст).
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(blockChan)
+		t.Fatal("worker did not enter WaitForJob in time")
+	}
 	if err := proc.Enqueue(evt); err != nil {
 		t.Fatalf("second enqueue: %v", err)
 	}
@@ -258,10 +265,13 @@ func (e errorGitea) PostComment(context.Context, string, int64, string) error {
 }
 
 type blockingStubJenkins struct {
-	unblock chan struct{}
+	unblock   chan struct{}
+	entered   chan struct{} // закрывается один раз при первом входе в WaitForJob
+	enteredOnce sync.Once
 }
 
 func (b *blockingStubJenkins) WaitForJob(ctx context.Context, _ *regexp.Regexp, _ string, _, _ time.Duration) (*jenkins.Job, error) {
+	b.enteredOnce.Do(func() { close(b.entered) }) // одноразовый сигнал тесту: воркер забрал событие и вошёл сюда
 	select {
 	case <-b.unblock:
 	case <-ctx.Done():
