@@ -105,15 +105,17 @@ flowchart LR
 
 **internal/config:** [config.go](../internal/config/config.go) — структуры конфига, `Load`, `Validate`, `GetRepositoryRule`, `NewHTTPClient`; [config_test.go](../internal/config/config_test.go) — тесты.
 
-**internal/server:** [server.go](../internal/server/server.go) — HTTP `GET /health`, `POST /webhook`, проверка подписи, запуск/остановка процессора.
+**internal/server:** [server.go](../internal/server/server.go) — HTTP `GET /health`, `POST /webhook`, проверка подписи, запуск/остановка процессора; [server_test.go](../internal/server/server_test.go) — тесты.
 
 **internal/processor:** [processor.go](../internal/processor/processor.go) — очередь, воркеры, обработка события, шаблоны; [processor_test.go](../internal/processor/processor_test.go) — тесты.
 
-**internal/jenkins:** [client.go](../internal/jenkins/client.go) — клиент Jenkins API; [client_test.go](../internal/jenkins/client_test.go) — тесты.
+**internal/jenkins:** [client.go](../internal/jenkins/client.go) — клиент Jenkins API; [client_test.go](../internal/jenkins/client_test.go) — тесты; [integration_test.go](../internal/jenkins/integration_test.go) — интеграционные тесты (build tag `integration`).
 
-**internal/gitea:** [client.go](../internal/gitea/client.go) — клиент Gitea API.
+**internal/gitea:** [client.go](../internal/gitea/client.go) — клиент Gitea API; [client_test.go](../internal/gitea/client_test.go) — тесты; [integration_test.go](../internal/gitea/integration_test.go) — интеграционные тесты (build tag `integration`).
 
-**pkg/webhook:** [types.go](../pkg/webhook/types.go) — типы событий Gitea.
+**pkg/webhook:** [types.go](../pkg/webhook/types.go) — типы событий Gitea; [types_test.go](../pkg/webhook/types_test.go) — тесты.
+
+**Тестирование:** вся документация по тестам — в [docs/test/](test/README.md): тест-планы по функциям ([test-plans.md](test/test-plans.md)), примеры запросов к Jenkins/Gitea ([integration-requests.md](test/integration-requests.md)). Интеграционные тесты в `internal/jenkins` и `internal/gitea` компилируются с тегом `integration` и пропускаются без переменных окружения.
 
 **Конфиг и CI:** конфиг приложения — YAML по пути из `-config`. CI: [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 

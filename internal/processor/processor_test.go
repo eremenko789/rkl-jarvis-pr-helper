@@ -177,3 +177,251 @@ func waitWithTimeout(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) {
 		t.Fatalf("timeout waiting for waitgroup")
 	}
 }
+
+func TestProcessor_EnqueueNotStarted(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	proc := processor.New(cfg, stubJenkins{}, newStubGitea(t), nil)
+	// Do not Start
+	err := proc.Enqueue(webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: "org/repo"},
+		PullRequest: webhook.PullRequest{Number: 1},
+	})
+	if err == nil {
+		t.Fatal("expected error when enqueue without start")
+	}
+}
+
+func TestProcessor_EnqueueQueueFull(t *testing.T) {
+	// QueueSize 2, 1 worker: enqueue 2 events -> worker takes first and blocks, second sits in queue.
+	// Third enqueue -> queue full.
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 2},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j", Timeout: time.Hour},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	blockChan := make(chan struct{})
+	blockingStub := &blockingStubJenkins{unblock: blockChan}
+	// Use noop gitea so we don't need WaitGroup (number of events that complete is timing-dependent)
+	gClient := &noopGitea{}
+	proc := processor.New(cfg, blockingStub, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: "org/repo"},
+		PullRequest: webhook.PullRequest{Number: 1},
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("first enqueue: %v", err)
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("second enqueue: %v", err)
+	}
+	// Queue now has 1 in channel (second event), 1 in worker (first). Buffer 2 full.
+	err := proc.Enqueue(evt)
+	if err == nil {
+		close(blockChan)
+		t.Fatal("expected error when queue full")
+	}
+	close(blockChan)
+	// Allow workers to finish so Stop() doesn't hang
+	time.Sleep(500 * time.Millisecond)
+}
+
+type noopGitea struct{}
+
+func (noopGitea) PostComment(context.Context, string, int64, string) error {
+	return nil
+}
+
+type blockingStubJenkins struct {
+	unblock chan struct{}
+}
+
+func (b *blockingStubJenkins) WaitForJob(ctx context.Context, _ *regexp.Regexp, _ string, _, _ time.Duration) (*jenkins.Job, error) {
+	select {
+	case <-b.unblock:
+	case <-ctx.Done():
+	}
+	return nil, context.DeadlineExceeded
+}
+
+func TestProcessor_StartIdempotent(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	proc := processor.New(cfg, stubJenkins{}, newStubGitea(t), nil)
+	proc.Start()
+	proc.Start() // second start should be no-op
+	proc.Stop()
+}
+
+func TestProcessor_StopWithoutStart(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	proc := processor.New(cfg, stubJenkins{}, newStubGitea(t), nil)
+	proc.Stop() // should not block
+}
+
+func TestProcessor_ProcessEvent_RepoNotConfigured(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	gClient := newStubGitea(t)
+	proc := processor.New(cfg, stubJenkins{}, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: "other/repo"},
+		PullRequest: webhook.PullRequest{Number: 1},
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	gClient.mu.Lock()
+	n := len(gClient.comments)
+	gClient.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("expected no comments for unconfigured repo, got %d", n)
+	}
+}
+
+func TestProcessor_ProcessEvent_IgnoredAction(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	gClient := newStubGitea(t)
+	proc := processor.New(cfg, stubJenkins{}, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	for _, action := range []string{"synchronized", "closed"} {
+		gClient.mu.Lock()
+		gClient.comments = nil
+		gClient.mu.Unlock()
+		evt := webhook.PullRequestEvent{
+			Action:      action,
+			Repository:  webhook.Repository{FullName: "org/repo"},
+			PullRequest: webhook.PullRequest{Number: 1},
+		}
+		if err := proc.Enqueue(evt); err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
+		gClient.mu.Lock()
+		n := len(gClient.comments)
+		gClient.mu.Unlock()
+		if n != 0 {
+			t.Fatalf("action %q: expected no comments, got %d", action, n)
+		}
+	}
+}
+
+func TestProcessor_ProcessEvent_EmptyRepoName(t *testing.T) {
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	gClient := newStubGitea(t)
+	proc := processor.New(cfg, stubJenkins{}, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: ""},
+		PullRequest: webhook.PullRequest{Number: 1},
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	gClient.mu.Lock()
+	n := len(gClient.comments)
+	gClient.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("expected no comments for empty repo name, got %d", n)
+	}
+}
+
+func TestProcessor_ProcessEvent_InvalidJobPattern(t *testing.T) {
+	// Template output that is invalid regex: e.g. "[invalid" or just "["
+	cfg := &config.Config{
+		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Repositories: []config.RepositoryRule{
+			{Name: "org/repo", JobPattern: "["}, // "[" is invalid regex
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	gClient := newStubGitea(t)
+	proc := processor.New(cfg, stubJenkins{}, gClient, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := webhook.PullRequestEvent{
+		Action:      "opened",
+		Repository:  webhook.Repository{FullName: "org/repo"},
+		PullRequest: webhook.PullRequest{Number: 1},
+	}
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	gClient.mu.Lock()
+	n := len(gClient.comments)
+	gClient.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("expected no comments when job pattern invalid, got %d", n)
+	}
+}
