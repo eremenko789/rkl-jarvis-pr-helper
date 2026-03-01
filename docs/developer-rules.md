@@ -7,15 +7,13 @@
 | Команда | Описание |
 |---------|----------|
 | `make build` | Сборка бинарника в `bin/webhook-service`. |
-| `make test` | Запуск юнит- и интеграционных тестов: `test-unit` + `test-integration`. |
-| `make test-unit` | Только юнит-тесты с `-race` по `./internal/...` и `./pkg/...`. |
-| `make test-integration` | Запуск интеграционных тестов (build tag `integration`); требуются переменные окружения, см. [docs/test/integration-requests.md](test/integration-requests.md). |
-| `make cover` | Юнит-тесты с покрытием: `coverage.out` и вызов `go tool cover -func=coverage.out`. |
-| `make cover-html` | Генерация HTML-отчёта покрытия `coverage.html` из `coverage.out` (запускает сбор `coverage.out`, если его ещё нет). |
+| `make test` | Юнит-тесты с `-race` и покрытием, интеграционные тесты, вывод `go tool cover -func`, генерация `coverage.out` и `coverage.html`. |
+| `make test-unit` | Только юнит-тесты с `-race` по `./internal/...` и `./pkg/...` (без покрытия). |
+| `make test-integration` | Только интеграционные тесты (build tag `integration`); требуются переменные окружения, см. [docs/test/integration-requests.md](test/integration-requests.md). |
 | `make lint` | `go vet ./...`. |
 | `make fmt` | `gofmt -w` по всем Go-файлам. |
 | `make tidy` | `go mod tidy`. |
-| `make ci` | Последовательно: tidy, lint, test, build, cover. |
+| `make ci` | Последовательно: tidy, lint, test, build. |
 | `make clean` | Удаление `bin/`, `coverage.out` и `coverage.html`. |
 | `make docker-build` | Сборка Docker-образа. |
 | `make docker-run` | Сборка и запуск контейнера (порт 8081, монтирование config.example.yaml). |
@@ -30,7 +28,7 @@
 Workflow: [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
 - **Триггеры**: pull_request; push в ветку `main`; push тегов `v*.*.*`.
-- **Job test**: checkout, Go 1.22, `make tidy`, `make lint`, `make test`, `make cover`, загрузка артефакта `coverage.out`.
+- **Job test**: checkout, Go 1.22, `make tidy`, `make lint`, `make test` (тесты + покрытие + HTML), загрузка артефактов `coverage.out` и `coverage.html`.
 - **Job build**: после test, матрица сборки (linux/386, amd64, arm, arm64) → артефакты бинарников.
 - **Job release**: только при push тега; скачивание артефактов сборки, создание GitHub Release с приложением всех бинарников (через softprops/action-gh-release).
 
@@ -41,7 +39,7 @@ Workflow: [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
 ## Тесты и покрытие
 
-- **Юнит-тесты:** `make test-unit` (или `go test -race ./internal/... ./pkg/...`). Покрытие: `make cover` (генерирует `coverage.out`); HTML-отчёт: `make cover-html` → `coverage.html`. Файл `coverage.out` загружается в CI как артефакт.
+- **Тесты:** `make test` — юнит-тесты с покрытием, интеграционные тесты, генерация `coverage.out` и `coverage.html`. В CI артефактами публикуются оба файла. Только юнит без покрытия: `make test-unit`.
 - **Интеграционные тесты:** тесты с build tag `integration` в `internal/jenkins/integration_test.go` и `internal/gitea/integration_test.go`. Запуск: `make test-integration`. Без переменных окружения (JENKINS_BASE_URL, GITEA_BASE_URL, GITEA_TOKEN) тесты пропускаются (skip). Примеры запросов и условия запуска: [docs/test/integration-requests.md](test/integration-requests.md).
 - **Документация по тестам:** вся в поддиректории [docs/test/](test/): оглавление — [test/README.md](test/README.md); тест-планы по функциям — [test/test-plans.md](test/test-plans.md).
 

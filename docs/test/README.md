@@ -9,9 +9,8 @@
 
 ## Запуск тестов
 
-- **Юнит-тесты:** `make test-unit` (или `go test -race ./internal/... ./pkg/...`)
-- **Все тесты (юнит + интеграция):** `make test`
-- **Покрытие:** `make cover`; HTML-отчёт: `make cover-html` → `coverage.html`
-- **Интеграционные тесты:** `make test-integration` (требуют переменные окружения, см. [integration-requests.md](integration-requests.md))
+- **Тесты (с покрытием):** `make test` — юнит-тесты с покрытием, интеграционные тесты, вывод по функциям, генерация `coverage.out` и `coverage.html`
+- **Только юнит-тесты:** `make test-unit` (без покрытия)
+- **Только интеграционные тесты:** `make test-integration` (требуют переменные окружения, см. [integration-requests.md](integration-requests.md))
 
 Тесты размещены рядом с кодом: `*_test.go` в соответствующих пакетах.
