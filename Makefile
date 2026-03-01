@@ -5,7 +5,7 @@ BUILD_DIR := bin
 IMAGE := gitea-jenkins-webhook
 GO_FILES := $(shell find . -name '*.go' -not -path "./vendor/*")
 
-.PHONY: all build test test-unit test-integration lint cover cover-html fmt tidy clean docker-build docker-run docker-compose ci
+.PHONY: all build test test-unit test-integration lint fmt tidy clean docker-build docker-run docker-compose ci
 
 all: build
 
@@ -18,29 +18,17 @@ tidy:
 lint:
 	go vet ./...
 
-test: test-unit test-integration
-
-test-unit:
-	go test -race ./internal/... ./pkg/...
-
-test-integration:
-	go test -tags=integration -race ./internal/jenkins/... ./internal/gitea/...
-
-cover:
-	go test -covermode=atomic -coverprofile=coverage.out ./internal/... ./pkg/...
+# Юнит-тесты с покрытием, интеграционные тесты, отчёт в консоль и coverage.html
+test:
+	go test -race -tags=integration -covermode=atomic -coverprofile=coverage.out ./internal/... ./pkg/...
 	go tool cover -func=coverage.out
-
-cover-html: coverage.out
 	go tool cover -html=coverage.out -o coverage.html
-
-coverage.out:
-	go test -covermode=atomic -coverprofile=coverage.out ./internal/... ./pkg/...
 
 build:
 	mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/webhook-service
 
-ci: tidy lint test build cover
+ci: tidy lint test build
 
 clean:
 	rm -rf $(BUILD_DIR) coverage.out coverage.html
