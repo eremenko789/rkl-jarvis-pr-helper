@@ -13,7 +13,7 @@
 ## Зависимости
 
 - Зависимости Go перечислены в [go.mod](../go.mod) (например `gopkg.in/yaml.v3`). Обновление: `make tidy` или `go mod tidy`.
-- Внешние сервисы: Gitea (API и webhook), Jenkins (REST API с Basic Auth). Версии не фиксируются в документации; достаточно совместимости API (webhook Pull Request, комментарии к issue/PR, Jenkins tree API для списка джоб).
+- Внешние сервисы: Gitea (API и webhook), Jenkins (REST API с Basic Auth). Версии не фиксируются в документации; достаточно совместимости API (webhook Pull Request с `base.ref` и `head.sha`, комментарии к issue/PR, список файлов PR, статусы коммита, Jenkins tree API для списка джоб).
 
 ## Переменные окружения
 

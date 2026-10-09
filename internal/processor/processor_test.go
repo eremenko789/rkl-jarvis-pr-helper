@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/example/gitea-jenkins-webhook/internal/config"
+	"github.com/example/gitea-jenkins-webhook/internal/gitea"
 	"github.com/example/gitea-jenkins-webhook/internal/jenkins"
 	"github.com/example/gitea-jenkins-webhook/internal/processor"
 	"github.com/example/gitea-jenkins-webhook/pkg/webhook"
@@ -39,6 +40,14 @@ func (s *stubGitea) PostComment(ctx context.Context, repoFullName string, issueI
 	defer s.mu.Unlock()
 	s.comments = append(s.comments, body)
 	s.wg.Done()
+	return nil
+}
+
+func (s *stubGitea) ListPullRequestFiles(context.Context, string, int64) ([]gitea.PullRequestFile, error) {
+	return nil, nil
+}
+
+func (s *stubGitea) CreateCommitStatus(context.Context, string, string, gitea.CommitStatus) error {
 	return nil
 }
 
@@ -181,9 +190,9 @@ func waitWithTimeout(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) {
 
 func TestProcessor_EnqueueNotStarted(t *testing.T) {
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
-		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins:      config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -205,9 +214,9 @@ func TestProcessor_EnqueueQueueFull(t *testing.T) {
 	// QueueSize 2, 1 worker: 1-й забирает воркер и блокирует в WaitForJob; 2-й и 3-й помещаются в буфер; 4-й — очередь полная.
 	// Синхронизация через entered: ждём входа воркера в WaitForJob (значит событие #1 уже вынуто из канала), затем заполняем буфер 2 и 3.
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 2},
-		Jenkins: config.JenkinsConfig{BaseURL: "https://j", Timeout: time.Hour},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 2},
+		Jenkins:      config.JenkinsConfig{BaseURL: "https://j", Timeout: time.Hour},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -257,6 +266,14 @@ func (noopGitea) PostComment(context.Context, string, int64, string) error {
 	return nil
 }
 
+func (noopGitea) ListPullRequestFiles(context.Context, string, int64) ([]gitea.PullRequestFile, error) {
+	return nil, nil
+}
+
+func (noopGitea) CreateCommitStatus(context.Context, string, string, gitea.CommitStatus) error {
+	return nil
+}
+
 // errorGitea возвращает ошибку из PostComment (для покрытия ветки обработки ошибки).
 type errorGitea struct{ err error }
 
@@ -264,9 +281,17 @@ func (e errorGitea) PostComment(context.Context, string, int64, string) error {
 	return e.err
 }
 
+func (e errorGitea) ListPullRequestFiles(context.Context, string, int64) ([]gitea.PullRequestFile, error) {
+	return nil, nil
+}
+
+func (e errorGitea) CreateCommitStatus(context.Context, string, string, gitea.CommitStatus) error {
+	return nil
+}
+
 type blockingStubJenkins struct {
-	unblock   chan struct{}
-	entered   chan struct{} // закрывается один раз при первом входе в WaitForJob
+	unblock     chan struct{}
+	entered     chan struct{} // закрывается один раз при первом входе в WaitForJob
 	enteredOnce sync.Once
 }
 
@@ -281,9 +306,9 @@ func (b *blockingStubJenkins) WaitForJob(ctx context.Context, _ *regexp.Regexp, 
 
 func TestProcessor_StartIdempotent(t *testing.T) {
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
-		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins:      config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -297,9 +322,9 @@ func TestProcessor_StartIdempotent(t *testing.T) {
 
 func TestProcessor_StopWithoutStart(t *testing.T) {
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
-		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins:      config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -311,9 +336,9 @@ func TestProcessor_StopWithoutStart(t *testing.T) {
 
 func TestProcessor_ProcessEvent_RepoNotConfigured(t *testing.T) {
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
-		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins:      config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -343,9 +368,9 @@ func TestProcessor_ProcessEvent_RepoNotConfigured(t *testing.T) {
 
 func TestProcessor_ProcessEvent_IgnoredAction(t *testing.T) {
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
-		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins:      config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -380,9 +405,9 @@ func TestProcessor_ProcessEvent_IgnoredAction(t *testing.T) {
 
 func TestProcessor_ProcessEvent_EmptyRepoName(t *testing.T) {
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
-		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Jenkins:      config.JenkinsConfig{BaseURL: "https://j"},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: "^x$"}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -419,7 +444,7 @@ func TestProcessor_WaitForJobReturnsError(t *testing.T) {
 			PollInterval: time.Millisecond,
 			Timeout:      time.Second,
 		},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Gitea:        config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{{Name: "org/repo", JobPattern: `^x$`}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -494,7 +519,7 @@ func TestProcessor_InvalidCommentTemplate(t *testing.T) {
 			PollInterval: time.Millisecond,
 			Timeout:      time.Second,
 		},
-		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
+		Gitea: config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{
 			{Name: "org/repo", JobPattern: `^x$`, SuccessCommentTemplate: "{{ .Number "}, // unclosed
 		},
@@ -528,7 +553,7 @@ func TestProcessor_InvalidCommentTemplate(t *testing.T) {
 func TestProcessor_ProcessEvent_InvalidJobPattern(t *testing.T) {
 	// Template output that is invalid regex: e.g. "[invalid" or just "["
 	cfg := &config.Config{
-		Server: config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
+		Server:  config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
 		Jenkins: config.JenkinsConfig{BaseURL: "https://j"},
 		Gitea:   config.GiteaConfig{BaseURL: "https://g", Token: "t"},
 		Repositories: []config.RepositoryRule{

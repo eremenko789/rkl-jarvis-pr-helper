@@ -146,6 +146,53 @@ Authorization: token your_access_token
 
 Для интеграционных тестов: подставить реальные `owner`, `repo`, `index` и токен; при необходимости проверить появление комментария через GET списка комментариев к issue.
 
+### Список файлов pull request (ListPullRequestFiles)
+
+**Запрос:**
+
+```http
+GET /repos/{owner}/{repo}/pulls/{index}/files?page=1&limit=50 HTTP/1.1
+Host: gitea.example.com
+Authorization: token your_access_token
+```
+
+Пример: `GET https://gitea.example.com/api/v1/repos/myorg/myrepo/pulls/5/files?page=1&limit=50`
+
+**Пример ответа (200 OK):**
+
+```json
+[
+  {
+    "filename": "main.go",
+    "status": "modified"
+  },
+  {
+    "filename": "docs/secret.txt",
+    "previous_filename": "legacy/secret.txt",
+    "status": "renamed"
+  }
+]
+```
+
+Клиент запрашивает следующие страницы, пока страница короче `limit`. Если страниц больше 200, запрос завершается ошибкой.
+
+### Статус коммита (CreateCommitStatus)
+
+**Запрос:**
+
+```http
+POST /repos/{owner}/{repo}/statuses/{sha} HTTP/1.1
+Host: gitea.example.com
+Content-Type: application/json
+Authorization: token your_access_token
+
+{"state":"failure","context":"checks/forbidden-files","description":"Изменены файлы из чёрного списка: go.sum"}
+```
+
+`sha` — `pull_request.head.sha`. `state`: `success`, если файлы из чёрного списка не изменены; `failure`, если изменён хотя бы один; `error`, если список файлов получить не удалось.
+
+**Пример ответа (201 Created):** объект статуса с теми же `state`, `context` и `description`.
+
 ---
 
 ## Вебхук (POST /webhook)
@@ -159,7 +206,7 @@ Authorization: token your_access_token
 
 ### Пример минимального payload (opened/reopened)
 
-Сервис обрабатывает только `action` = `opened` или `reopened`. Остальные действия игнорируются (событие принимается 202, но комментарий не постится).
+Поиск джобы Jenkins выполняется только для `action` = `opened` или `reopened`. Проверки из секции `checks` дополнительно выполняются для `synchronized`. Для статуса коммита в payload нужны `pull_request.base.ref` и `pull_request.head.sha`.
 
 **Тело запроса (JSON):**
 
@@ -171,7 +218,9 @@ Authorization: token your_access_token
     "number": 5,
     "title": "Add feature X",
     "body": "Description",
-    "url": "https://gitea.example.com/myorg/myrepo/pulls/5"
+    "url": "https://gitea.example.com/myorg/myrepo/pulls/5",
+    "base": {"ref": "main", "sha": "aaa111"},
+    "head": {"ref": "feature", "sha": "bbb222"}
   },
   "repository": {
     "id": 1,

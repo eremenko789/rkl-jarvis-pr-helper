@@ -26,6 +26,23 @@
 3. При необходимости добавить настройки в конфиг (например путь или флаг включения) — см. «Добавить опцию конфига».
 4. Обновить [docs/api-surface.md](api-surface.md) и при необходимости [docs/README.md](README.md) или [setup.md](setup.md).
 
+## Добавить правило проверки file_blacklist
+
+1. В [config.example.yaml](../config.example.yaml) (и в рабочем конфиге) добавить элемент в `checks`.
+2. Заполнить общие поля: `name`, `type: file_blacklist`, `target_branches` (регулярные выражения целевой ветки). При необходимости — `context`, `success_description`, `failure_description`.
+3. В `file_blacklist.patterns` перечислить glob-шаблоны файлов. Точный путь, `*`/`?` внутри одного сегмента и `**` через каталоги описаны в [configuration.md](configuration.md).
+4. Отдельно менять код не нужно: `Validate()` компилирует выражения веток, процессор публикует статус для действий `opened`, `reopened` и `synchronized`.
+
+## Добавить тип проверки
+
+Структура секции `checks` общая для всех типов. Новый тип не меняет поля привязки к ветке и публикации статуса.
+
+1. В [internal/config/config.go](../internal/config/config.go) добавить константу `CheckType*` и структуру настроек.
+2. Добавить в `CheckRule` указатель на эту структуру с тегом `yaml:"<type>"`.
+3. В `validateChecks` принять новый `type`: проверить, что заполнен свой объект и не заполнены чужие (`rejectForeignSpecs`), проставить описания статуса по умолчанию.
+4. В [internal/checks/checks.go](../internal/checks/checks.go) добавить ветку `Evaluate`. Результат — `Outcome` со `State` `success` или `failure` и описанием. Процессор сам публикует статус коммита.
+5. Добавить пример в [config.example.yaml](../config.example.yaml) и описать ключи в [configuration.md](configuration.md).
+
 ## Добавить поле в шаблон комментария или job_pattern
 
 1. В [internal/processor/processor.go](../internal/processor/processor.go) в `processEvent()` расширить карту `data`, передаваемую в `executeTemplate()`: добавить новые ключи (например из `evt`, `rule` или из результата Jenkins/Gitea).

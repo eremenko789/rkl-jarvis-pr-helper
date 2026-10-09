@@ -16,10 +16,19 @@ type PullRequestEvent struct {
 
 // PullRequest представляет информацию о pull request.
 type PullRequest struct {
-	Number int64  `json:"number"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	URL    string `json:"url"`
+	Number int64    `json:"number"`
+	Title  string   `json:"title"`
+	Body   string   `json:"body"`
+	URL    string   `json:"url"`
+	Base   PRBranch `json:"base"`
+	Head   PRBranch `json:"head"`
+}
+
+// PRBranch описывает ветку pull request.
+// Base — целевая ветка, Head — ветка с изменениями.
+type PRBranch struct {
+	Ref string `json:"ref"`
+	SHA string `json:"sha"`
 }
 
 // Repository представляет информацию о репозитории Gitea.

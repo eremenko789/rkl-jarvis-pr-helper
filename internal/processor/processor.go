@@ -12,7 +12,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/example/gitea-jenkins-webhook/internal/checks"
 	"github.com/example/gitea-jenkins-webhook/internal/config"
+	"github.com/example/gitea-jenkins-webhook/internal/gitea"
 	"github.com/example/gitea-jenkins-webhook/internal/jenkins"
 	"github.com/example/gitea-jenkins-webhook/pkg/webhook"
 )
@@ -22,9 +24,11 @@ type JenkinsClient interface {
 	WaitForJob(ctx context.Context, pattern *regexp.Regexp, jobRoot string, timeout, interval time.Duration) (*jenkins.Job, error)
 }
 
-// GiteaClient определяет интерфейс для публикации комментариев в Gitea.
+// GiteaClient определяет интерфейс для публикации комментариев и статусов в Gitea.
 type GiteaClient interface {
 	PostComment(ctx context.Context, repoFullName string, issueIndex int64, body string) error
+	ListPullRequestFiles(ctx context.Context, repoFullName string, index int64) ([]gitea.PullRequestFile, error)
+	CreateCommitStatus(ctx context.Context, repoFullName, sha string, status gitea.CommitStatus) error
 }
 
 // Processor обрабатывает события pull request из Gitea, ожидает появления соответствующих
@@ -133,8 +137,9 @@ func (p *Processor) worker(id int) {
 }
 
 // processEvent обрабатывает одно событие pull request:
+// - выполняет проверки из конфигурации и публикует статус коммита
 // - проверяет наличие правил для репозитория
-// - обрабатывает только события opened и reopened
+// - для Jenkins обрабатывает только события opened и reopened
 // - ожидает появления задачи Jenkins по шаблону
 // - публикует комментарий в Gitea с результатом
 func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEvent) {
@@ -149,9 +154,11 @@ func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEve
 		return
 	}
 
+	p.runChecks(ctx, evt)
+
 	rule, ok := p.cfg.GetRepositoryRule(evt.Repository.FullName)
 	if !ok {
-		p.log.Info("repository not configured, skipping", "repo", evt.Repository.FullName)
+		p.log.Info("repository not configured, skipping jenkins", "repo", evt.Repository.FullName)
 		return
 	}
 
@@ -164,7 +171,7 @@ func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEve
 		"poll_interval", rule.PollInterval)
 
 	if evt.Action != "opened" && evt.Action != "reopened" {
-		p.log.Info("ignoring pull request action", "action", evt.Action)
+		p.log.Info("ignoring pull request action for jenkins", "action", evt.Action)
 		return
 	}
 
@@ -265,6 +272,117 @@ func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEve
 			"repo", evt.Repository.FullName,
 			"pr", evt.PullRequest.Number,
 			"comment_length", len(body))
+	}
+}
+
+// runChecks выполняет проверки, привязанные к целевой ветке pull request,
+// и публикует результат статусом коммита head.
+func (p *Processor) runChecks(ctx context.Context, evt webhook.PullRequestEvent) {
+	if len(p.cfg.Checks) == 0 {
+		return
+	}
+	if !isCheckAction(evt.Action) {
+		p.log.Debug("skipping checks for action", "action", evt.Action)
+		return
+	}
+
+	base := evt.PullRequest.Base.Ref
+	applicable := checks.Applicable(p.cfg.Checks, base)
+	if len(applicable) == 0 {
+		p.log.Info("no checks match target branch",
+			"repo", evt.Repository.FullName,
+			"pr", evt.PullRequest.Number,
+			"base", base)
+		return
+	}
+
+	sha := evt.PullRequest.Head.SHA
+	if sha == "" {
+		p.log.Error("pull request head sha is empty, cannot set commit status",
+			"repo", evt.Repository.FullName,
+			"pr", evt.PullRequest.Number)
+		return
+	}
+
+	files, err := p.gc.ListPullRequestFiles(ctx, evt.Repository.FullName, pullRequestNumber(evt))
+	if err != nil {
+		p.log.Error("failed to list pull request files",
+			"err", err,
+			"repo", evt.Repository.FullName,
+			"pr", evt.PullRequest.Number)
+		for _, rule := range applicable {
+			p.publishCheckStatus(ctx, evt, sha, rule, checks.Outcome{
+				State:       checks.StateError,
+				Description: "Не удалось получить список файлов pull request",
+			})
+		}
+		return
+	}
+
+	changes := make([]checks.FileChange, len(files))
+	for i, file := range files {
+		changes[i] = checks.FileChange{
+			Filename:         file.Filename,
+			PreviousFilename: file.PreviousFilename,
+		}
+	}
+
+	for _, rule := range applicable {
+		outcome, evalErr := checks.Evaluate(rule, changes)
+		if evalErr != nil {
+			p.log.Error("check evaluation failed",
+				"err", evalErr,
+				"check", rule.Name,
+				"type", rule.Type)
+			outcome = checks.Outcome{
+				State:       checks.StateError,
+				Description: "Не удалось выполнить проверку",
+			}
+		}
+		p.publishCheckStatus(ctx, evt, sha, rule, outcome)
+	}
+}
+
+func (p *Processor) publishCheckStatus(ctx context.Context, evt webhook.PullRequestEvent, sha string, rule config.CheckRule, outcome checks.Outcome) {
+	status := gitea.CommitStatus{
+		State:       outcome.State,
+		Context:     rule.Context,
+		Description: outcome.Description,
+	}
+	if err := p.gc.CreateCommitStatus(ctx, evt.Repository.FullName, sha, status); err != nil {
+		p.log.Error("failed to post commit status",
+			"err", err,
+			"repo", evt.Repository.FullName,
+			"pr", evt.PullRequest.Number,
+			"sha", sha,
+			"check", rule.Name,
+			"context", rule.Context,
+			"state", outcome.State)
+		return
+	}
+	p.log.Info("commit status posted",
+		"repo", evt.Repository.FullName,
+		"pr", evt.PullRequest.Number,
+		"sha", sha,
+		"check", rule.Name,
+		"context", rule.Context,
+		"state", outcome.State)
+}
+
+func pullRequestNumber(evt webhook.PullRequestEvent) int64 {
+	if evt.PullRequest.Number != 0 {
+		return evt.PullRequest.Number
+	}
+	return evt.Number
+}
+
+// isCheckAction сообщает, может ли действие вебхука изменить набор файлов pull request.
+func isCheckAction(action string) bool {
+	switch action {
+	case "opened", "reopened", "synchronized":
+		return true
+	default:
+		return false
 	}
 }
 

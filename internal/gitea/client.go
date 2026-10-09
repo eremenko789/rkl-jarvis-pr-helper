@@ -9,9 +9,30 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
+
+const (
+	pullFilesPageSize = 50
+	maxPullFilePages  = 200
+)
+
+// PullRequestFile — файл, изменённый в pull request.
+type PullRequestFile struct {
+	Filename         string `json:"filename"`
+	PreviousFilename string `json:"previous_filename"`
+	Status           string `json:"status"`
+}
+
+// CommitStatus — статус коммита, публикуемый в Gitea.
+type CommitStatus struct {
+	State       string `json:"state"`
+	Context     string `json:"context,omitempty"`
+	Description string `json:"description,omitempty"`
+	TargetURL   string `json:"target_url,omitempty"`
+}
 
 // Client представляет клиент для работы с API Gitea.
 type Client struct {
@@ -232,4 +253,166 @@ func (c *Client) GetRepository(ctx context.Context, owner, repo string) error {
 	}
 
 	return nil
+}
+
+// ListPullRequestFiles возвращает файлы, изменённые в pull request.
+// Результат собирается постранично, пока API не вернёт неполную страницу.
+func (c *Client) ListPullRequestFiles(ctx context.Context, repoFullName string, index int64) ([]PullRequestFile, error) {
+	owner, repo, err := splitRepoFullName(repoFullName)
+	if err != nil {
+		c.log.Error("failed to split repo full name", "err", err, "repo", repoFullName)
+		return nil, err
+	}
+
+	var all []PullRequestFile
+	for page := 1; ; page++ {
+		if page > maxPullFilePages {
+			return nil, fmt.Errorf("pull request file list exceeded %d pages", maxPullFilePages)
+		}
+		endpoint := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/files?page=%d&limit=%d",
+			c.baseURL, owner, repo, index, page, pullFilesPageSize)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Authorization", fmt.Sprintf("token %s", c.token))
+
+		c.log.Info("Gitea API request",
+			"method", http.MethodGet,
+			"url", endpoint,
+			"base_url", c.baseURL,
+			"page", page)
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			c.log.Error("failed to execute Gitea request",
+				"err", err,
+				"url", endpoint,
+				"base_url", c.baseURL)
+			return nil, fmt.Errorf("list pull request files: %w", err)
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read pull request files: %w", readErr)
+		}
+
+		c.log.Info("Gitea API response",
+			"url", endpoint,
+			"base_url", c.baseURL,
+			"status_code", resp.StatusCode,
+			"status", resp.Status,
+			"response_body_length", len(respBody))
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			c.log.Error("Gitea API error",
+				"url", endpoint,
+				"status_code", resp.StatusCode,
+				"response_body", string(respBody))
+			return nil, fmt.Errorf("list pull request files failed: status %s", resp.Status)
+		}
+
+		var batch []PullRequestFile
+		if err := json.Unmarshal(respBody, &batch); err != nil {
+			return nil, fmt.Errorf("decode pull request files: %w", err)
+		}
+		all = append(all, batch...)
+		if len(batch) < pullFilesPageSize {
+			break
+		}
+	}
+
+	c.log.Info("pull request files listed",
+		"repo", repoFullName,
+		"index", index,
+		"files", len(all))
+	return all, nil
+}
+
+// CreateCommitStatus публикует статус коммита в репозитории Gitea.
+// sha — SHA коммита head pull request. Статус отображается на pull request.
+func (c *Client) CreateCommitStatus(ctx context.Context, repoFullName, sha string, status CommitStatus) error {
+	if sha == "" {
+		return fmt.Errorf("commit sha is empty")
+	}
+	if status.State == "" {
+		return fmt.Errorf("commit status state is empty")
+	}
+	if !validCommitStatusState(status.State) {
+		return fmt.Errorf("invalid commit status state %q", status.State)
+	}
+	if status.Context == "" {
+		return fmt.Errorf("commit status context is empty")
+	}
+
+	owner, repo, err := splitRepoFullName(repoFullName)
+	if err != nil {
+		c.log.Error("failed to split repo full name", "err", err, "repo", repoFullName)
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/statuses/%s", c.baseURL, owner, repo, url.PathEscape(sha))
+	data, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("marshal commit status: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", c.token))
+
+	c.log.Info("Gitea API request",
+		"method", http.MethodPost,
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"state", status.State,
+		"context", status.Context,
+		"request_body", string(data))
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		c.log.Error("failed to execute Gitea request",
+			"err", err,
+			"url", endpoint,
+			"base_url", c.baseURL)
+		return fmt.Errorf("create commit status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	c.log.Info("Gitea API response",
+		"url", endpoint,
+		"base_url", c.baseURL,
+		"status_code", resp.StatusCode,
+		"status", resp.Status,
+		"response_body", string(respBody),
+		"response_body_length", len(respBody))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.log.Error("Gitea API error",
+			"url", endpoint,
+			"status_code", resp.StatusCode,
+			"response_body", string(respBody))
+		return fmt.Errorf("create commit status failed: status %s", resp.Status)
+	}
+
+	c.log.Info("commit status posted",
+		"repo", repoFullName,
+		"sha", sha,
+		"context", status.Context,
+		"state", status.State)
+	return nil
+}
+
+func validCommitStatusState(state string) bool {
+	switch state {
+	case "pending", "success", "error", "failure", "warning":
+		return true
+	default:
+		return false
+	}
 }

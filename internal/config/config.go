@@ -7,9 +7,18 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	// CheckTypeFileBlacklist — проверка, что pull request не меняет файлы из чёрного списка.
+	CheckTypeFileBlacklist = "file_blacklist"
+
+	maxCommitStatusContextLen = 255
 )
 
 // ServerConfig содержит настройки HTTP-сервера.
@@ -48,6 +57,36 @@ type RepositoryRule struct {
 	FailureCommentTemplate string        `yaml:"failure_comment_template"`
 }
 
+// FileBlacklistCheck задаёт чёрный список путей для проверки типа file_blacklist.
+// Patterns — glob-шаблоны относительно корня репозитория: * и ? не переходят через /,
+// ** совпадает с любым числом сегментов пути.
+type FileBlacklistCheck struct {
+	Patterns []string `yaml:"patterns"`
+}
+
+// CheckRule — правило проверки pull request.
+// Общие поля одинаковы для всех типов и описывают, когда проверка применяется
+// и какой статус коммита публикуется. Настройки конкретного типа лежат во вложенном
+// объекте, ключ которого совпадает со значением Type.
+//
+// Чтобы добавить новый тип проверки:
+//  1. Завести константу CheckType*.
+//  2. Добавить структуру настроек и указатель на неё в CheckRule.
+//  3. Проверить поля в validateChecks.
+//  4. Реализовать ветку в checks.Evaluate.
+type CheckRule struct {
+	Name               string   `yaml:"name"`
+	Type               string   `yaml:"type"`
+	Context            string   `yaml:"context"`
+	SuccessDescription string   `yaml:"success_description"`
+	FailureDescription string   `yaml:"failure_description"`
+	TargetBranches     []string `yaml:"target_branches"`
+
+	FileBlacklist *FileBlacklistCheck `yaml:"file_blacklist,omitempty"`
+
+	targetBranches []*regexp.Regexp `yaml:"-"`
+}
+
 // Config представляет полную конфигурацию приложения, включая настройки сервера,
 // подключения к внешним сервисам и правила обработки репозиториев.
 type Config struct {
@@ -55,6 +94,7 @@ type Config struct {
 	Jenkins      JenkinsConfig     `yaml:"jenkins"`
 	Gitea        GiteaConfig       `yaml:"gitea"`
 	Repositories []RepositoryRule  `yaml:"repositories"`
+	Checks       []CheckRule       `yaml:"checks"`
 	RepoIndex    map[string]RepoID `yaml:"-"`
 }
 
@@ -140,7 +180,129 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.validateChecks(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateChecks проверяет правила проверок и компилирует регулярные выражения целевых веток.
+func (c *Config) validateChecks() error {
+	seenName := make(map[string]struct{}, len(c.Checks))
+	seenContext := make(map[string]struct{}, len(c.Checks))
+
+	for idx := range c.Checks {
+		ch := &c.Checks[idx]
+		if ch.Name == "" {
+			return fmt.Errorf("check at index %d missing name", idx)
+		}
+		if _, ok := seenName[ch.Name]; ok {
+			return fmt.Errorf("duplicate check name %q", ch.Name)
+		}
+		seenName[ch.Name] = struct{}{}
+
+		if ch.Type == "" {
+			return fmt.Errorf("check %q missing type", ch.Name)
+		}
+		if len(ch.TargetBranches) == 0 {
+			return fmt.Errorf("check %q must define target_branches", ch.Name)
+		}
+
+		ch.targetBranches = make([]*regexp.Regexp, 0, len(ch.TargetBranches))
+		for patternIdx, pattern := range ch.TargetBranches {
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return fmt.Errorf("check %q: target_branches[%d] %q: %w", ch.Name, patternIdx, pattern, err)
+			}
+			ch.targetBranches = append(ch.targetBranches, re)
+		}
+
+		if ch.Context == "" {
+			ch.Context = "checks/" + ch.Name
+		}
+		if len(ch.Context) > maxCommitStatusContextLen {
+			return fmt.Errorf("check %q: context exceeds %d bytes", ch.Name, maxCommitStatusContextLen)
+		}
+		if _, ok := seenContext[ch.Context]; ok {
+			return fmt.Errorf("duplicate check context %q", ch.Context)
+		}
+		seenContext[ch.Context] = struct{}{}
+
+		if err := ch.rejectForeignSpecs(); err != nil {
+			return err
+		}
+
+		switch ch.Type {
+		case CheckTypeFileBlacklist:
+			if err := validateFileBlacklist(ch); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("check %q: unknown type %q", ch.Name, ch.Type)
+		}
+	}
+
+	return nil
+}
+
+// rejectForeignSpecs возвращает ошибку, если у правила заполнены настройки чужого типа.
+func (ch *CheckRule) rejectForeignSpecs() error {
+	if ch.Type != CheckTypeFileBlacklist && ch.FileBlacklist != nil {
+		return fmt.Errorf("check %q: file_blacklist settings do not belong to type %q", ch.Name, ch.Type)
+	}
+	return nil
+}
+
+// validateFileBlacklist проверяет настройки чёрного списка файлов и подставляет описания статуса.
+func validateFileBlacklist(ch *CheckRule) error {
+	if ch.FileBlacklist == nil {
+		return fmt.Errorf("check %q: file_blacklist settings are required", ch.Name)
+	}
+	if len(ch.FileBlacklist.Patterns) == 0 {
+		return fmt.Errorf("check %q: file_blacklist.patterns must not be empty", ch.Name)
+	}
+	for idx, pattern := range ch.FileBlacklist.Patterns {
+		if err := validateFilePattern(pattern); err != nil {
+			return fmt.Errorf("check %q: file_blacklist.patterns[%d]: %w", ch.Name, idx, err)
+		}
+	}
+	if ch.SuccessDescription == "" {
+		ch.SuccessDescription = "Файлы из чёрного списка не изменены"
+	}
+	if ch.FailureDescription == "" {
+		ch.FailureDescription = "Изменены файлы из чёрного списка"
+	}
+	return nil
+}
+
+// validateFilePattern проверяет glob-шаблон пути относительно корня репозитория.
+func validateFilePattern(pattern string) error {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return fmt.Errorf("empty pattern")
+	}
+	pattern = strings.ReplaceAll(pattern, "\\", "/")
+	if strings.HasPrefix(pattern, "/") {
+		return fmt.Errorf("pattern %q must be relative", pattern)
+	}
+	for _, part := range strings.Split(pattern, "/") {
+		if part == "" {
+			return fmt.Errorf("pattern %q contains an empty path segment", pattern)
+		}
+	}
+	return nil
+}
+
+// MatchesTargetBranch сообщает, подходит ли правило к целевой ветке pull request.
+// Сравнение выполняется скомпилированными выражениями из target_branches.
+func (r CheckRule) MatchesTargetBranch(branch string) bool {
+	for _, re := range r.targetBranches {
+		if re.MatchString(branch) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildIndex строит индекс репозиториев для быстрого поиска правил по полному имени репозитория.

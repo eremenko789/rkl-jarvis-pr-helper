@@ -39,7 +39,7 @@
 ### Gitea
 
 1. **Webhook**: в настройках репозитория (или организации) создать webhook для события «Pull Request». URL — адрес сервиса, например `http(s)://<host>:8080/webhook`. Секрет — тот же, что в `server.webhook_secret` (подпись проверяется по заголовку `X-Gitea-Signature`, HMAC-SHA256).
-2. **Токен**: персональный access token с правом записи (в т.ч. комментарии к PR). Указать в `gitea.token`. API должен быть доступен по `gitea.base_url` (например `https://gitea.example.com/api/v1`).
+2. **Токен**: персональный access token с правом записи: комментарии к PR, чтение файлов pull request и публикация статусов коммита. Указать в `gitea.token`. API должен быть доступен по `gitea.base_url` (например `https://gitea.example.com/api/v1`).
 
 ### Jenkins
 
