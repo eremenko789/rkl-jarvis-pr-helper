@@ -152,8 +152,8 @@ func TestProcessor_FileBlacklistFailure(t *testing.T) {
 		{Filename: "README.md", Status: "modified"},
 		{Filename: "secrets/token.txt", Status: "added"},
 	}}
-	gc.wg.Add(2)
-	proc := processor.New(cfg, stubJenkins{}, gc, nil)
+	gc.wg.Add(1)
+	proc := processor.New(cfg, unexpectedJenkins{t: t}, gc, nil)
 	proc.Start()
 	defer proc.Stop()
 
@@ -173,6 +173,9 @@ func TestProcessor_FileBlacklistFailure(t *testing.T) {
 	}
 	if got.Description != "blocked: secrets/token.txt" {
 		t.Fatalf("description = %q", got.Description)
+	}
+	if len(gc.comments) != 0 {
+		t.Fatalf("jenkins comment should not be posted on reopen, got %d", len(gc.comments))
 	}
 }
 

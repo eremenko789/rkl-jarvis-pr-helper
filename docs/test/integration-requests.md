@@ -204,9 +204,9 @@ Authorization: token your_access_token
 - `X-Gitea-Event: pull_request` — обязательно для обработки (другие события приводят к 400).
 - `X-Gitea-Signature` — при настроенном `server.webhook_secret` подпись тела запроса в формате HMAC-SHA256, hex. Допускается префикс `sha256=`. Подпись вычисляется так: `HMAC-SHA256(secret, body)` и кодируется в hex.
 
-### Пример минимального payload (opened/reopened)
+### Пример минимального payload (opened)
 
-Поиск джобы Jenkins выполняется только для `action` = `opened` или `reopened`. Проверки из `repositories[].checks` дополнительно выполняются для `synchronized`. Репозиторий без этого поля не проверяется. Для статуса коммита в payload нужны `pull_request.base.ref` и `pull_request.head.sha`.
+Поиск джобы Jenkins выполняется только для `action` = `opened`. Проверки из `repositories[].checks` выполняются для `opened`, `synchronized` и `reopened`. Репозиторий без этого поля не проверяется. Для статуса коммита в payload нужны `pull_request.base.ref` и `pull_request.head.sha`.
 
 **Тело запроса (JSON):**
 
@@ -236,7 +236,7 @@ Authorization: token your_access_token
 }
 ```
 
-Для `reopened` достаточно заменить `"action": "reopened"`.
+Для обновления коммитов замените `"action": "synchronized"`: выполняются только проверки, поиск джобы Jenkins не запускается. Для повторного открытия — `"action": "reopened"`, поведение то же.
 
 ### Пример запроса с подписью (curl)
 

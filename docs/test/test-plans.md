@@ -168,14 +168,14 @@
 
 ### processEvent
 
-**Назначение:** по правилу репо обработать только opened/reopened; шаблон job_pattern → regex; WaitForJob; шаблон комментария; PostComment.
+**Назначение:** по правилу репо обработать только opened; шаблон job_pattern → regex; WaitForJob; шаблон комментария; PostComment.
 
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|
 | Основной | Репо настроен, action opened, джоба найдена → success comment | `TestProcessor_PostsSuccessComment` |
 | Основной | Репо настроен, джоба не найдена (timeout) → failure comment | `TestProcessor_PostsFailureCommentWhenNoJobFound` |
 | Граничный | Репозиторий без правила → Gitea не вызывается | `TestProcessor_ProcessEvent_RepoNotConfigured` |
-| Граничный | action synchronized/closed → Gitea не вызывается | `TestProcessor_ProcessEvent_IgnoredAction` |
+| Граничный | action synchronized/reopened/closed → комментарий Jenkins не публикуется | `TestProcessor_ProcessEvent_IgnoredAction` |
 | Граничный | repository.full_name пустой → выход без паники | `TestProcessor_ProcessEvent_EmptyRepoName` |
 | Граничный | Невалидный job_pattern (некомпилируемый regex после шаблона) → выход без паники, без комментария | `TestProcessor_ProcessEvent_InvalidJobPattern` |
 | Граничный | Ошибка шаблона комментария (невалидный синтаксис) → без комментария | `TestProcessor_InvalidCommentTemplate` |
@@ -184,7 +184,7 @@
 
 ### runChecks
 
-**Назначение:** для `opened`/`reopened`/`synchronized` выбрать правила по `base.ref`, получить файлы PR и опубликовать статус коммита. Поиск Jenkins при этом не меняется.
+**Назначение:** для `opened`/`synchronized`/`reopened` выбрать правила по `base.ref`, получить файлы PR и опубликовать статус коммита. Поиск Jenkins выполняется только для `opened`.
 
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|

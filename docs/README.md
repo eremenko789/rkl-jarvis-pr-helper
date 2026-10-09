@@ -2,7 +2,7 @@
 
 ## Обзор
 
-Микросервис на Go, принимающий вебхуки от Gitea о Pull Request. Для правил из `repositories[].checks` публикует статус коммита (сейчас — чёрный список файлов с привязкой к репозиторию и целевой ветке). Для настроенных репозиториев при открытии или повторном открытии PR ожидает джобу Jenkins и оставляет комментарий.
+Микросервис на Go, принимающий вебхуки от Gitea о Pull Request. Для правил из `repositories[].checks` публикует статус коммита (сейчас — чёрный список файлов с привязкой к репозиторию и целевой ветке). Для настроенных репозиториев при создании PR ожидает джобу Jenkins и оставляет комментарий.
 
 Источники истины: [README.md](../README.md), [config.example.yaml](../config.example.yaml), [internal/config/config.go](../internal/config/config.go), [Makefile](../Makefile), [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
