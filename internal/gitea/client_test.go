@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -289,11 +290,13 @@ func TestListPullRequestFiles_Pagination(t *testing.T) {
 		if r.URL.Path != "/repos/owner/repo/pulls/7/files" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		pages = append(pages, r.URL.Query().Get("page"))
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
 		if r.URL.Query().Get("limit") != "50" {
 			t.Errorf("limit = %s", r.URL.Query().Get("limit"))
 		}
-		if r.URL.Query().Get("page") == "1" {
+		if page == "1" {
+			setPullFilesPageHeaders(w, true, 1, 2)
 			files := make([]map[string]string, 50)
 			for i := range files {
 				files[i] = map[string]string{"filename": fmt.Sprintf("f%d.txt", i), "status": "modified"}
@@ -301,6 +304,7 @@ func TestListPullRequestFiles_Pagination(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(files)
 			return
 		}
+		setPullFilesPageHeaders(w, false, 2, 2)
 		_ = json.NewEncoder(w).Encode([]map[string]string{{
 			"filename":          "renamed.txt",
 			"previous_filename": "old.txt",
@@ -325,8 +329,108 @@ func TestListPullRequestFiles_Pagination(t *testing.T) {
 	}
 }
 
+func TestListPullRequestFiles_FullPageWithoutMore(t *testing.T) {
+	var requests int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		setPullFilesPageHeaders(w, false, 1, 1)
+		files := make([]map[string]string, 50)
+		for i := range files {
+			files[i] = map[string]string{"filename": fmt.Sprintf("f%d.txt", i), "status": "modified"}
+		}
+		_ = json.NewEncoder(w).Encode(files)
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	files, err := client.ListPullRequestFiles(context.Background(), "owner/repo", 1)
+	if err != nil {
+		t.Fatalf("ListPullRequestFiles: %v", err)
+	}
+	if requests != 1 || len(files) != 50 {
+		t.Fatalf("requests = %d, files = %d", requests, len(files))
+	}
+}
+
+func TestListPullRequestFiles_ShortPageWithMore(t *testing.T) {
+	var pages []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		if page == "1" {
+			setPullFilesPageHeaders(w, true, 1, 2)
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"filename": "a.txt", "status": "added"}})
+			return
+		}
+		setPullFilesPageHeaders(w, false, 2, 2)
+		_ = json.NewEncoder(w).Encode([]map[string]string{{"filename": "b.txt", "status": "added"}})
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	files, err := client.ListPullRequestFiles(context.Background(), "owner/repo", 1)
+	if err != nil {
+		t.Fatalf("ListPullRequestFiles: %v", err)
+	}
+	if len(files) != 2 || files[0].Filename != "a.txt" || files[1].Filename != "b.txt" {
+		t.Fatalf("files = %+v", files)
+	}
+	if len(pages) != 2 || pages[0] != "1" || pages[1] != "2" {
+		t.Fatalf("pages = %v", pages)
+	}
+}
+
+func TestListPullRequestFiles_Empty(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setPullFilesPageHeaders(w, false, 1, 0)
+		_, _ = io.WriteString(w, "[]")
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	files, err := client.ListPullRequestFiles(context.Background(), "owner/repo", 1)
+	if err != nil {
+		t.Fatalf("ListPullRequestFiles: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("files = %+v", files)
+	}
+}
+
+func TestListPullRequestFiles_MissingPaginationHeaders(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "[]")
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	_, err := client.ListPullRequestFiles(context.Background(), "owner/repo", 1)
+	if err == nil || !strings.Contains(err.Error(), "X-HasMore") {
+		t.Fatalf("expected missing pagination headers, got %v", err)
+	}
+}
+
+func TestListPullRequestFiles_PageMismatch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setPullFilesPageHeaders(w, false, 3, 3)
+		_, _ = io.WriteString(w, "[]")
+	}))
+	defer ts.Close()
+
+	client := gitea.NewClient(ts.URL, "t", &http.Client{Timeout: time.Second}, nil)
+	_, err := client.ListPullRequestFiles(context.Background(), "owner/repo", 1)
+	if err == nil || !strings.Contains(err.Error(), "X-Page") {
+		t.Fatalf("expected page mismatch, got %v", err)
+	}
+}
+
 func TestListPullRequestFiles_TooManyPages(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page < 1 {
+			page = 1
+		}
+		setPullFilesPageHeaders(w, true, page, 1000)
 		files := make([]map[string]string, 50)
 		for i := range files {
 			files[i] = map[string]string{"filename": fmt.Sprintf("f%d.txt", i), "status": "modified"}
@@ -341,6 +445,12 @@ func TestListPullRequestFiles_TooManyPages(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "exceeded") {
 		t.Fatalf("expected page limit error, got %v", err)
 	}
+}
+
+func setPullFilesPageHeaders(w http.ResponseWriter, hasMore bool, page, pageCount int) {
+	w.Header().Set("X-HasMore", strconv.FormatBool(hasMore))
+	w.Header().Set("X-Page", strconv.Itoa(page))
+	w.Header().Set("X-PageCount", strconv.Itoa(pageCount))
 }
 
 func TestListPullRequestFiles_ServerError(t *testing.T) {

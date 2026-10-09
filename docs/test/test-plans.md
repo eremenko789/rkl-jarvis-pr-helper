@@ -314,11 +314,15 @@
 
 ### ListPullRequestFiles
 
-**Назначение:** GET `/repos/{owner}/{repo}/pulls/{index}/files` постранично.
+**Назначение:** GET `/repos/{owner}/{repo}/pulls/{index}/files` постранично по заголовкам `X-HasMore`, `X-Page`, `X-PageCount`.
 
 | Тип | Тест-кейс | Тест |
 |-----|-----------|------|
 | Основной | Две страницы склеиваются, читается `previous_filename` | `TestListPullRequestFiles_Pagination` |
+| Граничный | Полная страница и `X-HasMore: false` — следующий запрос не делается | `TestListPullRequestFiles_FullPageWithoutMore` |
+| Граничный | Короткая страница и `X-HasMore: true` — запрашивается следующая | `TestListPullRequestFiles_ShortPageWithMore` |
+| Граничный | Пустой список, `X-PageCount: 0` | `TestListPullRequestFiles_Empty` |
+| Негативный | Нет заголовков пагинации / `X-Page` не совпал с запросом | `TestListPullRequestFiles_MissingPaginationHeaders`, `TestListPullRequestFiles_PageMismatch` |
 | Негативный | 404 / невалидный JSON / сеть / неверное имя репозитория / больше 200 страниц | `TestListPullRequestFiles_ServerError`, `TestListPullRequestFiles_InvalidJSON`, `TestListPullRequestFiles_DoFails`, `TestListPullRequestFiles_InvalidRepoName`, `TestListPullRequestFiles_TooManyPages` |
 
 ### CreateCommitStatus

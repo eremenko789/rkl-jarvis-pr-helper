@@ -53,6 +53,6 @@ HTTP-эндпоинты, форматы запросов и ответов, эк
 - **Контракт Jenkins**: используется дерево API `jobs[name,url,fullName]` (захардкожено в [internal/jenkins/client.go](../internal/jenkins/client.go)). Изменение набора полей потребует правки структур и запросов.
 - **Контракт Gitea**:
   - комментарий — `POST /repos/{owner}/{repo}/issues/{index}/comments` с телом `{"body": "..."}`;
-  - файлы PR — `GET /repos/{owner}/{repo}/pulls/{index}/files` (пагинация `page` и `limit`);
+  - файлы PR — `GET /repos/{owner}/{repo}/pulls/{index}/files` (параметры `page` и `limit`; следующая страница есть, пока заголовок `X-HasMore` равен `true` и `X-Page` меньше `X-PageCount`);
   - статус коммита — `POST /repos/{owner}/{repo}/statuses/{sha}` с телом `state`, `context`, `description`.
   - Заголовок аутентификации: `Authorization: token <token>`. Состояния статуса: `success`, `failure`, `error`.

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -255,8 +256,16 @@ func (c *Client) GetRepository(ctx context.Context, owner, repo string) error {
 	return nil
 }
 
+// pullFilesPage сообщает, есть ли следующая страница списка файлов.
+// Заголовки Gitea: X-HasMore, X-Page, X-PageCount.
+type pullFilesPage struct {
+	hasMore   bool
+	page      int
+	pageCount int
+}
+
 // ListPullRequestFiles возвращает файлы, изменённые в pull request.
-// Результат собирается постранично, пока API не вернёт неполную страницу.
+// Страницы запрашиваются, пока X-HasMore равен true и номер страницы меньше X-PageCount.
 func (c *Client) ListPullRequestFiles(ctx context.Context, repoFullName string, index int64) ([]PullRequestFile, error) {
 	owner, repo, err := splitRepoFullName(repoFullName)
 	if err != nil {
@@ -303,6 +312,9 @@ func (c *Client) ListPullRequestFiles(ctx context.Context, repoFullName string, 
 			"base_url", c.baseURL,
 			"status_code", resp.StatusCode,
 			"status", resp.Status,
+			"x_has_more", resp.Header.Get("X-HasMore"),
+			"x_page", resp.Header.Get("X-Page"),
+			"x_page_count", resp.Header.Get("X-PageCount"),
 			"response_body_length", len(respBody))
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -317,8 +329,15 @@ func (c *Client) ListPullRequestFiles(ctx context.Context, repoFullName string, 
 		if err := json.Unmarshal(respBody, &batch); err != nil {
 			return nil, fmt.Errorf("decode pull request files: %w", err)
 		}
+		info, err := parsePullFilesPage(resp.Header)
+		if err != nil {
+			return nil, fmt.Errorf("pull request files pagination: %w", err)
+		}
+		if info.page != page {
+			return nil, fmt.Errorf("pull request files pagination: X-Page %d does not match requested page %d", info.page, page)
+		}
 		all = append(all, batch...)
-		if len(batch) < pullFilesPageSize {
+		if !info.hasMore || page >= info.pageCount {
 			break
 		}
 	}
@@ -406,6 +425,28 @@ func (c *Client) CreateCommitStatus(ctx context.Context, repoFullName, sha strin
 		"context", status.Context,
 		"state", status.State)
 	return nil
+}
+
+func parsePullFilesPage(header http.Header) (pullFilesPage, error) {
+	hasMoreRaw := header.Get("X-HasMore")
+	pageRaw := header.Get("X-Page")
+	pageCountRaw := header.Get("X-PageCount")
+	if hasMoreRaw == "" || pageRaw == "" || pageCountRaw == "" {
+		return pullFilesPage{}, fmt.Errorf("missing X-HasMore, X-Page or X-PageCount")
+	}
+	hasMore, err := strconv.ParseBool(hasMoreRaw)
+	if err != nil {
+		return pullFilesPage{}, fmt.Errorf("parse X-HasMore %q: %w", hasMoreRaw, err)
+	}
+	page, err := strconv.Atoi(pageRaw)
+	if err != nil || page < 1 {
+		return pullFilesPage{}, fmt.Errorf("parse X-Page %q", pageRaw)
+	}
+	pageCount, err := strconv.Atoi(pageCountRaw)
+	if err != nil || pageCount < 0 {
+		return pullFilesPage{}, fmt.Errorf("parse X-PageCount %q", pageCountRaw)
+	}
+	return pullFilesPage{hasMore: hasMore, page: page, pageCount: pageCount}, nil
 }
 
 func validCommitStatusState(state string) bool {
