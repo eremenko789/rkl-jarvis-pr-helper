@@ -139,7 +139,7 @@ func (p *Processor) worker(id int) {
 // processEvent обрабатывает одно событие pull request:
 // - проверяет наличие правила репозитория
 // - выполняет проверки этого репозитория и публикует статус коммита
-// - для Jenkins обрабатывает только события opened и reopened
+// - для Jenkins обрабатывает только создание pull request (opened)
 // - ожидает появления задачи Jenkins по шаблону
 // - публикует комментарий в Gitea с результатом
 func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEvent) {
@@ -170,7 +170,7 @@ func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEve
 		"timeout", rule.Timeout,
 		"poll_interval", rule.PollInterval)
 
-	if evt.Action != "opened" && evt.Action != "reopened" {
+	if !isJenkinsAction(evt.Action) {
 		p.log.Info("ignoring pull request action for jenkins", "action", evt.Action)
 		return
 	}
@@ -376,7 +376,9 @@ func pullRequestNumber(evt webhook.PullRequestEvent) int64 {
 	return evt.Number
 }
 
-// isCheckAction сообщает, может ли действие вебхука изменить набор файлов pull request.
+// isCheckAction сообщает, нужно ли выполнять проверки.
+// opened — создание pull request, synchronized — обновление его коммитов,
+// reopened — повторное открытие с тем же набором изменений.
 func isCheckAction(action string) bool {
 	switch action {
 	case "opened", "reopened", "synchronized":
@@ -384,6 +386,12 @@ func isCheckAction(action string) bool {
 	default:
 		return false
 	}
+}
+
+// isJenkinsAction сообщает, нужно ли искать джобу Jenkins.
+// Поиск выполняется только при создании pull request.
+func isJenkinsAction(action string) bool {
+	return action == "opened"
 }
 
 // executeTemplate выполняет шаблон с указанными данными и возвращает результат.

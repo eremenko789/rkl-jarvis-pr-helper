@@ -2,7 +2,7 @@
 
 Единые термины для согласованной терминологии в документации и при изменениях кода.
 
-- **PR (Pull Request)** — запрос на слияние в Gitea; в контексте сервиса — событие вебхука с полями `action`, `pull_request`, `repository`, `sender`. Поиск джобы Jenkins выполняется для действий `opened` и `reopened`. Проверки из `repositories[].checks` дополнительно выполняются для `synchronized`.
+- **PR (Pull Request)** — запрос на слияние в Gitea; в контексте сервиса — событие вебхука с полями `action`, `pull_request`, `repository`, `sender`. Поиск джобы Jenkins выполняется только при создании pull request (`opened`). Проверки из `repositories[].checks` выполняются при создании (`opened`), обновлении коммитов (`synchronized`) и повторном открытии (`reopened`).
 
 - **Webhook (вебхук)** — HTTP POST от Gitea на эндпоинт `/webhook` с телом в виде JSON события (тип в заголовке `X-Gitea-Event`). Подпись в заголовке `X-Gitea-Signature` (HMAC-SHA256, секрет из `server.webhook_secret`).
 

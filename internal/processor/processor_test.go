@@ -381,7 +381,7 @@ func TestProcessor_ProcessEvent_IgnoredAction(t *testing.T) {
 	proc.Start()
 	defer proc.Stop()
 
-	for _, action := range []string{"synchronized", "closed"} {
+	for _, action := range []string{"synchronized", "reopened", "closed"} {
 		gClient.mu.Lock()
 		gClient.comments = nil
 		gClient.mu.Unlock()

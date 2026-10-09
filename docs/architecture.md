@@ -32,7 +32,7 @@ sequenceDiagram
         GiteaAPI-->>Processor: files[]
         Processor->>Processor: Оценка по type (file_blacklist)
         Processor->>GiteaAPI: POST .../statuses/{head.sha}
-        Processor->>Processor: Правило репозитория, action opened/reopened
+        Processor->>Processor: Правило репозитория, action opened
         Processor->>Processor: Шаблон job_pattern → regex
         loop Опрос до timeout
             Processor->>Jenkins: GET .../api/json?tree=jobs[name,url,fullName]
@@ -46,7 +46,7 @@ sequenceDiagram
 ```
 
 **Вход**: HTTP POST на `/webhook` с телом — JSON события Gitea `pull_request`.  
-**Обработка**: событие в очередь → воркер ищет правило по `repository.full_name` → выполняет проверки из `repositories[].checks`, если целевая ветка `pull_request.base.ref` совпала и действие `opened`, `reopened` или `synchronized`, и публикует статус коммита на `pull_request.head.sha` → для действий `opened` и `reopened` шаблон `job_pattern` → опрос Jenkins → комментарий в Gitea. Репозиторий без поля `checks` проверяется только через Jenkins.  
+**Обработка**: событие в очередь → воркер ищет правило по `repository.full_name` → выполняет проверки из `repositories[].checks`, если целевая ветка `pull_request.base.ref` совпала и действие `opened`, `synchronized` или `reopened`, и публикует статус коммита на `pull_request.head.sha` → только для `opened` шаблон `job_pattern` → опрос Jenkins → комментарий в Gitea. Репозиторий без поля `checks` проверяется только через Jenkins при создании pull request.  
 **Выход**: статус коммита в Gitea (`success`, если файлы из чёрного списка не изменены, `failure`, если изменён хотя бы один) и, для настроенных репозиториев, комментарий в PR.
 
 ## Пакеты / модули
