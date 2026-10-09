@@ -49,7 +49,7 @@ HTTP-эндпоинты, форматы запросов и ответов, эк
 - **Добавление эндпоинта**: в `server.New()` зарегистрировать новый обработчик через `mux.HandleFunc`; при необходимости добавить флаг или конфиг. Обработчики принимают `(http.ResponseWriter, *http.Request)`.
 - **Изменение формата вебхука**: изменить структуры в `pkg/webhook/types.go` и парсинг в `server.handleWebhook`; при добавлении новых полей в шаблоны комментариев — расширить `data` в `processor.processEvent` и описать в [configuration.md](configuration.md).
 - **Новые поля конфига**: добавить поля в структуры в [internal/config/config.go](../internal/config/config.go), обработать в `Validate()` (значения по умолчанию и проверки), обновить [config.example.yaml](../config.example.yaml) и документацию.
-- **Новый тип проверки**: общее правило — `config.CheckRule` (секция `checks`). Тип задаётся полем `type`, настройки — вложенным объектом с тем же именем. Реализация оценки — ветка `checks.Evaluate`. Подробные шаги — в [common-tasks.md](common-tasks.md).
+- **Новый тип проверки**: общее правило — `config.CheckRule` в `repositories[].checks`. Тип задаётся полем `type`, настройки — вложенным объектом с тем же именем. Реализация оценки — ветка `checks.Evaluate`. Подробные шаги — в [common-tasks.md](common-tasks.md).
 - **Контракт Jenkins**: используется дерево API `jobs[name,url,fullName]` (захардкожено в [internal/jenkins/client.go](../internal/jenkins/client.go)). Изменение набора полей потребует правки структур и запросов.
 - **Контракт Gitea**:
   - комментарий — `POST /repos/{owner}/{repo}/issues/{index}/comments` с телом `{"body": "..."}`;

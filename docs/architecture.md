@@ -27,7 +27,7 @@ sequenceDiagram
     Server-->>Gitea: 202 Accepted
 
     loop Воркер
-        Processor->>Processor: checks: action opened/reopened/synchronized, base.ref ~ target_branches
+        Processor->>Processor: Правило репозитория, checks этого репозитория
         Processor->>GiteaAPI: GET .../pulls/{pr}/files
         GiteaAPI-->>Processor: files[]
         Processor->>Processor: Оценка по type (file_blacklist)
@@ -46,7 +46,7 @@ sequenceDiagram
 ```
 
 **Вход**: HTTP POST на `/webhook` с телом — JSON события Gitea `pull_request`.  
-**Обработка**: событие в очередь → воркер выполняет подходящие проверки из `checks` (целевая ветка `pull_request.base.ref`, действия `opened`, `reopened`, `synchronized`) и публикует статус коммита на `pull_request.head.sha` → если репозиторий есть в `repositories` и действие `opened` или `reopened`, шаблон `job_pattern` → опрос Jenkins → комментарий в Gitea. Проверки выполняются и для репозиториев без правила Jenkins.  
+**Обработка**: событие в очередь → воркер ищет правило по `repository.full_name` → выполняет проверки из `repositories[].checks`, если целевая ветка `pull_request.base.ref` совпала и действие `opened`, `reopened` или `synchronized`, и публикует статус коммита на `pull_request.head.sha` → для действий `opened` и `reopened` шаблон `job_pattern` → опрос Jenkins → комментарий в Gitea. Репозиторий без поля `checks` проверяется только через Jenkins.  
 **Выход**: статус коммита в Gitea (`success`, если файлы из чёрного списка не изменены, `failure`, если изменён хотя бы один) и, для настроенных репозиториев, комментарий в PR.
 
 ## Пакеты / модули
@@ -133,5 +133,5 @@ flowchart LR
 
 ## Контекст для агентов
 
-- **Стек:** Go 1.22. Точка входа: [cmd/webhook-service](../cmd/webhook-service) (команды `run`, `check`; флаги `-config`, `-debug`). Конфиг: один YAML, загрузка в [internal/config](../internal/config/config.go) — `Load(path)`, `Validate()`. Проверки PR: секция `checks`, исполнение в [internal/checks](../internal/checks/checks.go) и [internal/processor](../internal/processor/processor.go).
+- **Стек:** Go 1.22. Точка входа: [cmd/webhook-service](../cmd/webhook-service) (команды `run`, `check`; флаги `-config`, `-debug`). Конфиг: один YAML, загрузка в [internal/config](../internal/config/config.go) — `Load(path)`, `Validate()`. Проверки PR: поле `repositories[].checks`, исполнение в [internal/checks](../internal/checks/checks.go) и [internal/processor](../internal/processor/processor.go).
 - **Где что искать:** компоненты и поток — разделы выше; пакеты — таблица «Пакеты / модули»; файлы — «Карта файлов и каталогов». Термины — [glossary.md](glossary.md). Контракт API — [api-surface.md](api-surface.md). Типовые изменения — [common-tasks.md](common-tasks.md). Стиль кода — [conventions.md](conventions.md).

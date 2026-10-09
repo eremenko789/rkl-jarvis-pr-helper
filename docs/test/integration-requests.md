@@ -206,7 +206,7 @@ Authorization: token your_access_token
 
 ### Пример минимального payload (opened/reopened)
 
-Поиск джобы Jenkins выполняется только для `action` = `opened` или `reopened`. Проверки из секции `checks` дополнительно выполняются для `synchronized`. Для статуса коммита в payload нужны `pull_request.base.ref` и `pull_request.head.sha`.
+Поиск джобы Jenkins выполняется только для `action` = `opened` или `reopened`. Проверки из `repositories[].checks` дополнительно выполняются для `synchronized`. Репозиторий без этого поля не проверяется. Для статуса коммита в payload нужны `pull_request.base.ref` и `pull_request.head.sha`.
 
 **Тело запроса (JSON):**
 

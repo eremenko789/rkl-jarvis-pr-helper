@@ -148,17 +148,21 @@ func compiledRule(name string, branches []string) config.CheckRule {
 	cfg := &config.Config{
 		Jenkins: config.JenkinsConfig{BaseURL: "https://j.example.com"},
 		Gitea:   config.GiteaConfig{BaseURL: "https://g.example.com", Token: "t"},
-		Checks: []config.CheckRule{{
-			Name:           name,
-			Type:           config.CheckTypeFileBlacklist,
-			TargetBranches: branches,
-			FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+		Repositories: []config.RepositoryRule{{
+			Name:       "org/repo",
+			JobPattern: "^x$",
+			Checks: []config.CheckRule{{
+				Name:           name,
+				Type:           config.CheckTypeFileBlacklist,
+				TargetBranches: branches,
+				FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+			}},
 		}},
 	}
 	if err := cfg.Validate(); err != nil {
 		panic(err)
 	}
-	return cfg.Checks[0]
+	return cfg.Repositories[0].Checks[0]
 }
 
 func fileRule(t *testing.T, patterns []string) config.CheckRule {
@@ -166,17 +170,21 @@ func fileRule(t *testing.T, patterns []string) config.CheckRule {
 	cfg := &config.Config{
 		Jenkins: config.JenkinsConfig{BaseURL: "https://j.example.com"},
 		Gitea:   config.GiteaConfig{BaseURL: "https://g.example.com", Token: "t"},
-		Checks: []config.CheckRule{{
-			Name:           "forbidden",
-			Type:           config.CheckTypeFileBlacklist,
-			TargetBranches: []string{".*"},
-			FileBlacklist:  &config.FileBlacklistCheck{Patterns: patterns},
+		Repositories: []config.RepositoryRule{{
+			Name:       "org/repo",
+			JobPattern: "^x$",
+			Checks: []config.CheckRule{{
+				Name:           "forbidden",
+				Type:           config.CheckTypeFileBlacklist,
+				TargetBranches: []string{".*"},
+				FileBlacklist:  &config.FileBlacklistCheck{Patterns: patterns},
+			}},
 		}},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	return cfg.Checks[0]
+	return cfg.Repositories[0].Checks[0]
 }
 
 func names(rules []config.CheckRule) []string {

@@ -69,12 +69,27 @@ func (u unexpectedJenkins) WaitForJob(context.Context, *regexp.Regexp, string, t
 
 func blacklistConfig(t *testing.T, repos []config.RepositoryRule, rules ...config.CheckRule) *config.Config {
 	t.Helper()
+	if len(repos) == 0 {
+		repos = []config.RepositoryRule{{
+			Name:       "org/repo",
+			JobPattern: "^job-{{ .Number }}$",
+		}}
+	}
+	attached := false
+	for i := range repos {
+		if repos[i].Name == "org/repo" {
+			repos[i].Checks = rules
+			attached = true
+		}
+	}
+	if !attached {
+		t.Fatal("org/repo is required to attach checks")
+	}
 	cfg := &config.Config{
 		Server:       config.ServerConfig{WorkerPoolSize: 1, QueueSize: 10},
 		Jenkins:      config.JenkinsConfig{BaseURL: "https://jenkins.example.com", PollInterval: time.Millisecond, Timeout: time.Second},
 		Gitea:        config.GiteaConfig{BaseURL: "https://gitea.example.com", Token: "t"},
 		Repositories: repos,
-		Checks:       rules,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -115,7 +130,7 @@ func TestProcessor_FileBlacklistSuccess(t *testing.T) {
 	proc.Start()
 	defer proc.Stop()
 
-	if err := proc.Enqueue(prEvent("opened", "main", "headsha")); err != nil {
+	if err := proc.Enqueue(prEvent("synchronized", "main", "headsha")); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	waitWithTimeout(t, &gc.wg, 2*time.Second)
@@ -137,7 +152,7 @@ func TestProcessor_FileBlacklistFailure(t *testing.T) {
 		{Filename: "README.md", Status: "modified"},
 		{Filename: "secrets/token.txt", Status: "added"},
 	}}
-	gc.wg.Add(1)
+	gc.wg.Add(2)
 	proc := processor.New(cfg, stubJenkins{}, gc, nil)
 	proc.Start()
 	defer proc.Stop()
@@ -240,7 +255,7 @@ func TestProcessor_FileBlacklistSynchronizedWithoutJenkins(t *testing.T) {
 func TestProcessor_FileBlacklistListError(t *testing.T) {
 	cfg := blacklistConfig(t, nil, fileRule("forbidden", "checks/forbidden", []string{"^main$"}, []string{"go.sum"}))
 	gc := &recordingGitea{listErr: errors.New("gitea down")}
-	gc.wg.Add(1)
+	gc.wg.Add(2)
 	proc := processor.New(cfg, stubJenkins{}, gc, nil)
 	proc.Start()
 	defer proc.Stop()
@@ -340,7 +355,7 @@ func TestProcessor_FileBlacklistTwoMatchingRules(t *testing.T) {
 	proc.Start()
 	defer proc.Stop()
 
-	if err := proc.Enqueue(prEvent("opened", "main", "abc")); err != nil {
+	if err := proc.Enqueue(prEvent("synchronized", "main", "abc")); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	waitWithTimeout(t, &gc.wg, 2*time.Second)
@@ -370,7 +385,7 @@ func TestProcessor_FileBlacklistStatusPostError(t *testing.T) {
 	proc.Start()
 	defer proc.Stop()
 
-	if err := proc.Enqueue(prEvent("opened", "main", "abc")); err != nil {
+	if err := proc.Enqueue(prEvent("synchronized", "main", "abc")); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	waitWithTimeout(t, &gc.wg, 2*time.Second)
@@ -379,5 +394,32 @@ func TestProcessor_FileBlacklistStatusPostError(t *testing.T) {
 	defer gc.mu.Unlock()
 	if len(gc.statuses) != 1 {
 		t.Fatalf("status attempt = %d", len(gc.statuses))
+	}
+}
+
+func TestProcessor_FileBlacklistSkipsOtherRepository(t *testing.T) {
+	cfg := blacklistConfig(t,
+		[]config.RepositoryRule{
+			{Name: "org/repo", JobPattern: "^job$"},
+			{Name: "org/other", JobPattern: "^job$"},
+		},
+		fileRule("forbidden", "checks/forbidden", []string{".*"}, []string{"go.sum"}),
+	)
+	gc := &recordingGitea{files: []gitea.PullRequestFile{{Filename: "go.sum"}}}
+	proc := processor.New(cfg, unexpectedJenkins{t: t}, gc, nil)
+	proc.Start()
+	defer proc.Stop()
+
+	evt := prEvent("synchronized", "main", "abc")
+	evt.Repository.FullName = "org/other"
+	if err := proc.Enqueue(evt); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+	if gc.listCalls != 0 || len(gc.statuses) != 0 {
+		t.Fatalf("checks of org/repo must not run for org/other, listCalls=%d statuses=%d", gc.listCalls, len(gc.statuses))
 	}
 }

@@ -44,6 +44,8 @@
 | Негативный | Нет name / дубликат name / неизвестный type / нет target_branches / битый regex / дубликат context | `TestValidate_ChecksMissingName`, `TestValidate_ChecksDuplicateName`, `TestValidate_ChecksUnknownType`, `TestValidate_ChecksMissingTargetBranches`, `TestValidate_ChecksInvalidTargetBranch`, `TestValidate_ChecksDuplicateContext` |
 | Негативный | Нет блока `file_blacklist`, пустые patterns, абсолютный путь, чужой блок настроек | `TestValidate_ChecksFileBlacklistMissing`, `TestValidate_ChecksFileBlacklistEmptyPatterns`, `TestValidate_ChecksFileBlacklistInvalidPattern`, `TestValidate_ChecksForeignSpec` |
 | Граничный | `MatchesTargetBranch` до `Validate` — false | `TestCheckRule_MatchesTargetBranchWithoutValidate` |
+| Граничный | У репозитория нет поля `checks` | `TestValidate_RepositoryWithoutChecks` |
+| Граничный | Одинаковые name и context в разных репозиториях допустимы | `TestValidate_ChecksSameNameDifferentRepos` |
 
 ### GetRepositoryRule
 
@@ -197,6 +199,7 @@
 | Негативный | Ошибка списка файлов → status error | `TestProcessor_FileBlacklistListError` |
 | Граничный | Пустой head SHA — статус не публикуется | `TestProcessor_FileBlacklistMissingSHA` |
 | Негативный | Ошибка публикации статуса — без паники | `TestProcessor_FileBlacklistStatusPostError` |
+| Граничный | Проверки другого репозитория не выполняются | `TestProcessor_FileBlacklistSkipsOtherRepository` |
 
 ### executeTemplate
 
