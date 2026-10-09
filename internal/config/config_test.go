@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -308,6 +309,214 @@ func TestNewHTTPClient_ZeroTimeout(t *testing.T) {
 	clientNeg := config.NewHTTPClient(false, -1)
 	if clientNeg.Timeout != 10*time.Second {
 		t.Fatalf("expected default timeout 10s for negative, got %v", clientNeg.Timeout)
+	}
+}
+
+func TestLoad_ExampleConfig(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatalf("example config: %v", err)
+	}
+	if len(cfg.Checks) != 1 || cfg.Checks[0].Type != config.CheckTypeFileBlacklist {
+		t.Fatalf("example checks = %+v", cfg.Checks)
+	}
+	if !cfg.Checks[0].MatchesTargetBranch("main") {
+		t.Fatal("example check should match main")
+	}
+}
+
+func TestLoad_Checks(t *testing.T) {
+	cfgContent := `
+jenkins:
+  base_url: "https://jenkins.example.com"
+gitea:
+  base_url: "https://gitea.example.com"
+  token: "secret"
+checks:
+  - name: forbidden-files
+    type: file_blacklist
+    target_branches:
+      - "^main$"
+      - "^release/.*"
+    file_blacklist:
+      patterns:
+        - "go.sum"
+        - "vendor/**"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(cfgContent), 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Checks) != 1 {
+		t.Fatalf("checks = %d", len(cfg.Checks))
+	}
+	ch := cfg.Checks[0]
+	if ch.Type != config.CheckTypeFileBlacklist {
+		t.Fatalf("type = %s", ch.Type)
+	}
+	if ch.Context != "checks/forbidden-files" {
+		t.Fatalf("context = %s", ch.Context)
+	}
+	if ch.SuccessDescription == "" || ch.FailureDescription == "" {
+		t.Fatal("expected default descriptions")
+	}
+	if !ch.MatchesTargetBranch("main") || !ch.MatchesTargetBranch("release/1.0") {
+		t.Fatal("expected branch patterns to match")
+	}
+	if ch.MatchesTargetBranch("develop") {
+		t.Fatal("develop should not match")
+	}
+}
+
+func TestValidate_ChecksMissingName(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Type:           config.CheckTypeFileBlacklist,
+		TargetBranches: []string{"^main$"},
+		FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+	})
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for missing name")
+	}
+}
+
+func TestValidate_ChecksDuplicateName(t *testing.T) {
+	rule := config.CheckRule{
+		Name:           "same",
+		Type:           config.CheckTypeFileBlacklist,
+		TargetBranches: []string{"^main$"},
+		FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+	}
+	cfg := checkConfig(rule, rule)
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for duplicate name")
+	}
+}
+
+func TestValidate_ChecksUnknownType(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Name:           "other",
+		Type:           "title_prefix",
+		TargetBranches: []string{"^main$"},
+	})
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for unknown type")
+	}
+}
+
+func TestValidate_ChecksMissingTargetBranches(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Name:          "forbidden",
+		Type:          config.CheckTypeFileBlacklist,
+		FileBlacklist: &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+	})
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for missing target_branches")
+	}
+}
+
+func TestValidate_ChecksInvalidTargetBranch(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Name:           "forbidden",
+		Type:           config.CheckTypeFileBlacklist,
+		TargetBranches: []string{"["},
+		FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+	})
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for invalid regex")
+	}
+}
+
+func TestValidate_ChecksDuplicateContext(t *testing.T) {
+	cfg := checkConfig(
+		config.CheckRule{
+			Name:           "one",
+			Type:           config.CheckTypeFileBlacklist,
+			Context:        "checks/files",
+			TargetBranches: []string{"^main$"},
+			FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+		},
+		config.CheckRule{
+			Name:           "two",
+			Type:           config.CheckTypeFileBlacklist,
+			Context:        "checks/files",
+			TargetBranches: []string{"^main$"},
+			FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"a.txt"}},
+		},
+	)
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for duplicate context")
+	}
+}
+
+func TestValidate_ChecksFileBlacklistMissing(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Name:           "forbidden",
+		Type:           config.CheckTypeFileBlacklist,
+		TargetBranches: []string{"^main$"},
+	})
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for missing file_blacklist")
+	}
+}
+
+func TestValidate_ChecksFileBlacklistEmptyPatterns(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Name:           "forbidden",
+		Type:           config.CheckTypeFileBlacklist,
+		TargetBranches: []string{"^main$"},
+		FileBlacklist:  &config.FileBlacklistCheck{},
+	})
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for empty patterns")
+	}
+}
+
+func TestValidate_ChecksFileBlacklistInvalidPattern(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Name:           "forbidden",
+		Type:           config.CheckTypeFileBlacklist,
+		TargetBranches: []string{"^main$"},
+		FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"/abs/path"}},
+	})
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for absolute pattern")
+	}
+}
+
+func TestValidate_ChecksForeignSpec(t *testing.T) {
+	cfg := checkConfig(config.CheckRule{
+		Name:           "other",
+		Type:           "not-a-type",
+		TargetBranches: []string{"^main$"},
+		FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+	})
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for foreign spec")
+	}
+	if err.Error() == "" || !strings.Contains(err.Error(), "do not belong") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCheckRule_MatchesTargetBranchWithoutValidate(t *testing.T) {
+	rule := config.CheckRule{TargetBranches: []string{"^main$"}}
+	if rule.MatchesTargetBranch("main") {
+		t.Fatal("uncompiled rule must not match")
+	}
+}
+
+func checkConfig(rules ...config.CheckRule) *config.Config {
+	return &config.Config{
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j.example.com"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g.example.com", Token: "t"},
+		Checks:  rules,
 	}
 }
 

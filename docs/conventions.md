@@ -5,7 +5,7 @@
 ## Именование
 
 - **Файлы**: snake_case для имён файлов не принят; используются короткие имена в lowercase: `main.go`, `run.go`, `check.go`, `server.go`, `processor.go`, `config.go`, `client.go`, `types.go`.
-- **Пакеты**: короткое имя в одном слове: `main`, `config`, `server`, `processor`, `jenkins`, `gitea`, `webhook`. Имя пакета совпадает с последней частью пути импорта (например `internal/config` → пакет `config`).
+- **Пакеты**: короткое имя в одном слове: `main`, `config`, `server`, `processor`, `checks`, `jenkins`, `gitea`, `webhook`. Имя пакета совпадает с последней частью пути импорта (например `internal/config` → пакет `config`).
 - **Символы**: экспортируемые типы и функции — PascalCase; неэкспортируемые — camelCase. Константы — PascalCase при экспорте (например `headerEvent`, `headerSignature` в server — неэкспортируемые). Параметры и локальные переменные — краткие осмысленные имена (camelCase).
 - **Конфиг (YAML)**: ключи в snake_case (`listen_addr`, `webhook_secret`, `job_pattern`, `poll_interval` и т.д.).
 

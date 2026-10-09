@@ -33,6 +33,18 @@
 | Граничный | У репо пустые poll_interval/timeout — наследуются из jenkins | `TestValidate_RepoInheritsIntervals` |
 | Граничный | Пустые шаблоны комментариев — дефолтные строки | `TestValidate_DefaultTemplates` |
 
+### checks
+
+**Назначение:** провалидировать правила проверок, скомпилировать `target_branches` и подставить описания статуса.
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Основной | Пример конфига загружается, проверка `file_blacklist` матчит `main` | `TestLoad_ExampleConfig` |
+| Основной | YAML с checks — дефолтные context и описания, ветки совпадают | `TestLoad_Checks` |
+| Негативный | Нет name / дубликат name / неизвестный type / нет target_branches / битый regex / дубликат context | `TestValidate_ChecksMissingName`, `TestValidate_ChecksDuplicateName`, `TestValidate_ChecksUnknownType`, `TestValidate_ChecksMissingTargetBranches`, `TestValidate_ChecksInvalidTargetBranch`, `TestValidate_ChecksDuplicateContext` |
+| Негативный | Нет блока `file_blacklist`, пустые patterns, абсолютный путь, чужой блок настроек | `TestValidate_ChecksFileBlacklistMissing`, `TestValidate_ChecksFileBlacklistEmptyPatterns`, `TestValidate_ChecksFileBlacklistInvalidPattern`, `TestValidate_ChecksForeignSpec` |
+| Граничный | `MatchesTargetBranch` до `Validate` — false | `TestCheckRule_MatchesTargetBranchWithoutValidate` |
+
 ### GetRepositoryRule
 
 **Назначение:** по full_name вернуть правило репозитория и флаг наличия.
@@ -104,6 +116,32 @@
 
 ---
 
+## internal/checks
+
+### MatchFile
+
+**Назначение:** сопоставить путь файла с glob-шаблоном (`*`, `?`, `**`).
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Основной | Точный путь, `*`, `**`, `?` | `TestMatchFile` |
+| Граничный | `*` не переходит через `/`; регистр учитывается | `TestMatchFile` |
+
+### Applicable и Evaluate
+
+**Назначение:** отобрать правила по целевой ветке и оценить `file_blacklist`.
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Основной | Ветка совпадает только с подходящими правилами | `TestApplicable` |
+| Основной | Нет совпадений — success, в том числе при пустом diff | `TestEvaluateFileBlacklist_Success`, `TestEvaluateFileBlacklist_EmptyDiff` |
+| Основной | Совпавшие пути в описании failure | `TestEvaluateFileBlacklist_Failure` |
+| Основной | Учитывается `previous_filename` | `TestEvaluateFileBlacklist_PreviousFilename` |
+| Граничный | Длинное описание обрезается до 255 байт без разрыва UTF-8 | `TestEvaluateFileBlacklist_TruncatesDescription`, `TestEvaluateFileBlacklist_TruncatesOnRuneBoundary` |
+| Негативный | Неизвестный тип и пустые настройки | `TestEvaluate_UnknownType`, `TestEvaluate_MissingSpec` |
+
+---
+
 ## internal/processor
 
 ### New, Start, Stop
@@ -141,6 +179,24 @@
 | Граничный | Ошибка шаблона комментария (невалидный синтаксис) → без комментария | `TestProcessor_InvalidCommentTemplate` |
 | Граничный | PostComment возвращает ошибку → логирование, без паники | `TestProcessor_PostCommentFails` |
 | Граничный | WaitForJob возвращает (job, err) — логирование "error waiting for jenkins job", затем success comment | `TestProcessor_WaitForJobReturnsError` |
+
+### runChecks
+
+**Назначение:** для `opened`/`reopened`/`synchronized` выбрать правила по `base.ref`, получить файлы PR и опубликовать статус коммита. Поиск Jenkins при этом не меняется.
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Основной | Нет файлов из чёрного списка → status success | `TestProcessor_FileBlacklistSuccess` |
+| Основной | Изменён файл из списка → status failure с путём | `TestProcessor_FileBlacklistFailure` |
+| Основной | Переименование с `previous_filename` из списка → failure | `TestProcessor_FileBlacklistPreviousFilename` |
+| Основной | Два правила на одну ветку публикуют два статуса | `TestProcessor_FileBlacklistTwoMatchingRules` |
+| Основной | Проверка и комментарий Jenkins на одном событии | `TestProcessor_FileBlacklistWithJenkinsComment` |
+| Граничный | Ветка не совпала — файлы не запрашиваются, Jenkins-комментарий остаётся | `TestProcessor_FileBlacklistSkipsUnmatchedBranch` |
+| Граничный | `synchronized` выполняет проверку и не вызывает Jenkins | `TestProcessor_FileBlacklistSynchronizedWithoutJenkins` |
+| Граничный | `closed` не запускает проверку | `TestProcessor_FileBlacklistIgnoresClosed` |
+| Негативный | Ошибка списка файлов → status error | `TestProcessor_FileBlacklistListError` |
+| Граничный | Пустой head SHA — статус не публикуется | `TestProcessor_FileBlacklistMissingSHA` |
+| Негативный | Ошибка публикации статуса — без паники | `TestProcessor_FileBlacklistStatusPostError` |
 
 ### executeTemplate
 
@@ -253,6 +309,25 @@
 | Негативный | Ошибка Do (сеть) → ошибка | `TestPostComment_DoFails` |
 | Негативный | Неверный repoFullName → ошибка от split | `TestPostComment_InvalidRepoName` |
 
+### ListPullRequestFiles
+
+**Назначение:** GET `/repos/{owner}/{repo}/pulls/{index}/files` постранично.
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Основной | Две страницы склеиваются, читается `previous_filename` | `TestListPullRequestFiles_Pagination` |
+| Негативный | 404 / невалидный JSON / сеть / неверное имя репозитория / больше 200 страниц | `TestListPullRequestFiles_ServerError`, `TestListPullRequestFiles_InvalidJSON`, `TestListPullRequestFiles_DoFails`, `TestListPullRequestFiles_InvalidRepoName`, `TestListPullRequestFiles_TooManyPages` |
+
+### CreateCommitStatus
+
+**Назначение:** POST `/repos/{owner}/{repo}/statuses/{sha}`.
+
+| Тип | Тест-кейс | Тест |
+|-----|-----------|------|
+| Основной | 201, путь и тело со state/context | `TestCreateCommitStatus_OK` |
+| Негативный | Пустой sha, пустой state, неизвестный state, пустой context, неверное имя репозитория | `TestCreateCommitStatus_Validation` |
+| Негативный | 500 и ошибка сети | `TestCreateCommitStatus_ServerError`, `TestCreateCommitStatus_DoFails` |
+
 ### CheckAccessibility
 
 **Назначение:** GET /user с токеном.
@@ -283,6 +358,7 @@
 |-----|-----------|------|
 | Основной | Title не пустой → Title | `TestDisplayName_WithTitle` |
 | Граничный | Title пустой → "PR" | `TestDisplayName_EmptyTitle` |
+| Основной | JSON `base`/`head` разбирается в `ref` и `sha` | `TestPullRequest_UnmarshalBaseHead` |
 
 ---
 
@@ -291,8 +367,9 @@
 | Пакет | Файл тестов |
 |-------|-------------|
 | internal/config | config_test.go |
+| internal/checks | checks_test.go, glob_test.go |
 | internal/server | server_test.go |
-| internal/processor | processor_test.go |
+| internal/processor | processor_test.go, checks_test.go |
 | internal/jenkins | client_test.go |
 | internal/gitea | client_test.go |
 | pkg/webhook | types_test.go |

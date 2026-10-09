@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/example/gitea-jenkins-webhook/internal/config"
+	"github.com/example/gitea-jenkins-webhook/internal/gitea"
 	"github.com/example/gitea-jenkins-webhook/internal/jenkins"
 	"github.com/example/gitea-jenkins-webhook/internal/processor"
 )
@@ -135,6 +136,14 @@ func (quickJenkins) WaitForJob(context.Context, *regexp.Regexp, string, time.Dur
 type nopGitea struct{}
 
 func (nopGitea) PostComment(ctx context.Context, _ string, _ int64, _ string) error {
+	return nil
+}
+
+func (nopGitea) ListPullRequestFiles(context.Context, string, int64) ([]gitea.PullRequestFile, error) {
+	return nil, nil
+}
+
+func (nopGitea) CreateCommitStatus(context.Context, string, string, gitea.CommitStatus) error {
 	return nil
 }
 

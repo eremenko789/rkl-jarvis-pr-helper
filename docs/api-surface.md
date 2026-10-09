@@ -32,14 +32,14 @@ HTTP-эндпоинты, форматы запросов и ответов, эк
 
 ## Форматы запросов и ответов
 
-- **Вебхук**: входящий JSON — структура Gitea Pull Request event. Ключевые поля для сервиса: `repository.full_name`, `pull_request.number`, `action`, `sender.login`, `pull_request.title` и т.д. (см. `webhook.PullRequestEvent`).
+- **Вебхук**: входящий JSON — структура Gitea Pull Request event. Ключевые поля для сервиса: `repository.full_name`, `pull_request.number`, `action`, `sender.login`, `pull_request.title`, `pull_request.base.ref` (целевая ветка), `pull_request.head.sha` (коммит для статуса). См. `webhook.PullRequestEvent` и `webhook.PRBranch`.
 - **Ответы**: тело только у `/health` (строка `ok`). На `/webhook` при успехе тело не задаёно (202); при ошибках — стандартные сообщения `http.Error` (текст в теле).
 
 ## Экспортируемые пакеты и типы
 
 - **internal** — не предназначен для импорта извне модуля; все символы доступны только внутри проекта.
 - **pkg/webhook** — публичный пакет:
-  - `PullRequestEvent`, `PullRequest`, `Repository`, `Sender` — структуры для декодирования вебхука.
+  - `PullRequestEvent`, `PullRequest`, `PRBranch`, `Repository`, `Sender` — структуры для декодирования вебхука. `PRBranch` содержит `ref` и `sha` веток `base` и `head`.
   - `PullRequest.DisplayName()` — метод.
 
 Типы конфига (например `config.Config`, `config.RepositoryRule`) экспортируются в рамках модуля и используются в `cmd` и `internal`; для внешних потребителей контрактом является YAML и описание в [configuration.md](configuration.md).
@@ -49,5 +49,10 @@ HTTP-эндпоинты, форматы запросов и ответов, эк
 - **Добавление эндпоинта**: в `server.New()` зарегистрировать новый обработчик через `mux.HandleFunc`; при необходимости добавить флаг или конфиг. Обработчики принимают `(http.ResponseWriter, *http.Request)`.
 - **Изменение формата вебхука**: изменить структуры в `pkg/webhook/types.go` и парсинг в `server.handleWebhook`; при добавлении новых полей в шаблоны комментариев — расширить `data` в `processor.processEvent` и описать в [configuration.md](configuration.md).
 - **Новые поля конфига**: добавить поля в структуры в [internal/config/config.go](../internal/config/config.go), обработать в `Validate()` (значения по умолчанию и проверки), обновить [config.example.yaml](../config.example.yaml) и документацию.
+- **Новый тип проверки**: общее правило — `config.CheckRule` (секция `checks`). Тип задаётся полем `type`, настройки — вложенным объектом с тем же именем. Реализация оценки — ветка `checks.Evaluate`. Подробные шаги — в [common-tasks.md](common-tasks.md).
 - **Контракт Jenkins**: используется дерево API `jobs[name,url,fullName]` (захардкожено в [internal/jenkins/client.go](../internal/jenkins/client.go)). Изменение набора полей потребует правки структур и запросов.
-- **Контракт Gitea**: создание комментария — `POST /repos/{owner}/{repo}/issues/{index}/comments` с телом `{"body": "..."}` и заголовком `Authorization: token <token>`.
+- **Контракт Gitea**:
+  - комментарий — `POST /repos/{owner}/{repo}/issues/{index}/comments` с телом `{"body": "..."}`;
+  - файлы PR — `GET /repos/{owner}/{repo}/pulls/{index}/files` (пагинация `page` и `limit`);
+  - статус коммита — `POST /repos/{owner}/{repo}/statuses/{sha}` с телом `state`, `context`, `description`.
+  - Заголовок аутентификации: `Authorization: token <token>`. Состояния статуса: `success`, `failure`, `error`.
