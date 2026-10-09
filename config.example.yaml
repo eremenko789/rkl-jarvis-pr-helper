@@ -26,31 +26,30 @@ repositories:
     timeout: 3m
     success_comment_template: "✅ Jenkins job {{ .JobName }} готов: {{ .JobURL }}"
     failure_comment_template: "⚠️ Не удалось обнаружить джобу для PR {{ .Number }} за {{ .Timeout }}."
+    # Необязательный список проверок этого репозитория.
+    # Каждое правило публикует отдельный статус коммита.
+    # Общие поля одинаковы для всех типов: name, type, context, target_branches,
+    # success_description, failure_description.
+    # Настройки типа лежат во вложенном объекте с ключом, равным type.
+    checks:
+      - name: forbidden-files
+        type: file_blacklist
+        context: "checks/forbidden-files"
+        # Регулярные выражения Go для целевой ветки PR (base.ref).
+        # Чтобы покрыть все ветки, укажите ".*" .
+        target_branches:
+          - "^main$"
+          - "^release/.*"
+        success_description: "Файлы из чёрного списка не изменены"
+        failure_description: "Изменены файлы из чёрного списка"
+        file_blacklist:
+          # Glob относительно корня репозитория.
+          # * и ? не переходят через /, ** — любое число каталогов.
+          patterns:
+            - "go.sum"
+            - "vendor/**"
+            - "**/.env"
+            - "deploy/production.yaml"
 
   - name: "org/repo-two"
     job_pattern: "^deploy-repo-two-{{ .Number }}$"
-
-# Проверки pull request. Каждое правило публикует отдельный статус коммита.
-# Общие поля одинаковы для всех типов: name, type, context, target_branches,
-# success_description, failure_description.
-# Настройки типа лежат во вложенном объекте с ключом, равным type.
-# Новый тип добавляется новым значением type и своим вложенным объектом.
-checks:
-  - name: forbidden-files
-    type: file_blacklist
-    context: "checks/forbidden-files"
-    # Регулярные выражения Go для целевой ветки PR (base.ref).
-    # Чтобы покрыть все ветки, укажите ".*" .
-    target_branches:
-      - "^main$"
-      - "^release/.*"
-    success_description: "Файлы из чёрного списка не изменены"
-    failure_description: "Изменены файлы из чёрного списка"
-    file_blacklist:
-      # Glob относительно корня репозитория.
-      # * и ? не переходят через /, ** — любое число каталогов.
-      patterns:
-        - "go.sum"
-        - "vendor/**"
-        - "**/.env"
-        - "deploy/production.yaml"

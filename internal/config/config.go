@@ -55,6 +55,7 @@ type RepositoryRule struct {
 	Timeout                time.Duration `yaml:"timeout"`
 	SuccessCommentTemplate string        `yaml:"success_comment_template"`
 	FailureCommentTemplate string        `yaml:"failure_comment_template"`
+	Checks                 []CheckRule   `yaml:"checks,omitempty"`
 }
 
 // FileBlacklistCheck задаёт чёрный список путей для проверки типа file_blacklist.
@@ -94,7 +95,6 @@ type Config struct {
 	Jenkins      JenkinsConfig     `yaml:"jenkins"`
 	Gitea        GiteaConfig       `yaml:"gitea"`
 	Repositories []RepositoryRule  `yaml:"repositories"`
-	Checks       []CheckRule       `yaml:"checks"`
 	RepoIndex    map[string]RepoID `yaml:"-"`
 }
 
@@ -187,33 +187,45 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateChecks проверяет правила проверок и компилирует регулярные выражения целевых веток.
+// validateChecks проверяет проверки каждого репозитория и компилирует выражения целевых веток.
+// Поле checks может отсутствовать.
 func (c *Config) validateChecks() error {
-	seenName := make(map[string]struct{}, len(c.Checks))
-	seenContext := make(map[string]struct{}, len(c.Checks))
+	for repoIdx := range c.Repositories {
+		repo := &c.Repositories[repoIdx]
+		if err := validateRepositoryChecks(repo.Name, repo.Checks); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	for idx := range c.Checks {
-		ch := &c.Checks[idx]
+// validateRepositoryChecks проверяет список проверок одного репозитория.
+func validateRepositoryChecks(repoName string, rules []CheckRule) error {
+	seenName := make(map[string]struct{}, len(rules))
+	seenContext := make(map[string]struct{}, len(rules))
+
+	for idx := range rules {
+		ch := &rules[idx]
 		if ch.Name == "" {
-			return fmt.Errorf("check at index %d missing name", idx)
+			return fmt.Errorf("repository %s: check at index %d missing name", repoName, idx)
 		}
 		if _, ok := seenName[ch.Name]; ok {
-			return fmt.Errorf("duplicate check name %q", ch.Name)
+			return fmt.Errorf("repository %s: duplicate check name %q", repoName, ch.Name)
 		}
 		seenName[ch.Name] = struct{}{}
 
 		if ch.Type == "" {
-			return fmt.Errorf("check %q missing type", ch.Name)
+			return fmt.Errorf("repository %s: check %q missing type", repoName, ch.Name)
 		}
 		if len(ch.TargetBranches) == 0 {
-			return fmt.Errorf("check %q must define target_branches", ch.Name)
+			return fmt.Errorf("repository %s: check %q must define target_branches", repoName, ch.Name)
 		}
 
 		ch.targetBranches = make([]*regexp.Regexp, 0, len(ch.TargetBranches))
 		for patternIdx, pattern := range ch.TargetBranches {
 			re, err := regexp.Compile(pattern)
 			if err != nil {
-				return fmt.Errorf("check %q: target_branches[%d] %q: %w", ch.Name, patternIdx, pattern, err)
+				return fmt.Errorf("repository %s: check %q: target_branches[%d] %q: %w", repoName, ch.Name, patternIdx, pattern, err)
 			}
 			ch.targetBranches = append(ch.targetBranches, re)
 		}
@@ -222,24 +234,24 @@ func (c *Config) validateChecks() error {
 			ch.Context = "checks/" + ch.Name
 		}
 		if len(ch.Context) > maxCommitStatusContextLen {
-			return fmt.Errorf("check %q: context exceeds %d bytes", ch.Name, maxCommitStatusContextLen)
+			return fmt.Errorf("repository %s: check %q: context exceeds %d bytes", repoName, ch.Name, maxCommitStatusContextLen)
 		}
 		if _, ok := seenContext[ch.Context]; ok {
-			return fmt.Errorf("duplicate check context %q", ch.Context)
+			return fmt.Errorf("repository %s: duplicate check context %q", repoName, ch.Context)
 		}
 		seenContext[ch.Context] = struct{}{}
 
 		if err := ch.rejectForeignSpecs(); err != nil {
-			return err
+			return fmt.Errorf("repository %s: %w", repoName, err)
 		}
 
 		switch ch.Type {
 		case CheckTypeFileBlacklist:
 			if err := validateFileBlacklist(ch); err != nil {
-				return err
+				return fmt.Errorf("repository %s: %w", repoName, err)
 			}
 		default:
-			return fmt.Errorf("check %q: unknown type %q", ch.Name, ch.Type)
+			return fmt.Errorf("repository %s: check %q: unknown type %q", repoName, ch.Name, ch.Type)
 		}
 	}
 

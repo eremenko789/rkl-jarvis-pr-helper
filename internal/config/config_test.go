@@ -317,10 +317,19 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("example config: %v", err)
 	}
-	if len(cfg.Checks) != 1 || cfg.Checks[0].Type != config.CheckTypeFileBlacklist {
-		t.Fatalf("example checks = %+v", cfg.Checks)
+	var checks []config.CheckRule
+	for _, repo := range cfg.Repositories {
+		if repo.Name == "org/repo-one" {
+			checks = repo.Checks
+		}
+		if repo.Name == "org/repo-two" && len(repo.Checks) != 0 {
+			t.Fatalf("repo-two checks should be absent, got %+v", repo.Checks)
+		}
 	}
-	if !cfg.Checks[0].MatchesTargetBranch("main") {
+	if len(checks) != 1 || checks[0].Type != config.CheckTypeFileBlacklist {
+		t.Fatalf("example checks = %+v", checks)
+	}
+	if !checks[0].MatchesTargetBranch("main") {
 		t.Fatal("example check should match main")
 	}
 }
@@ -332,16 +341,19 @@ jenkins:
 gitea:
   base_url: "https://gitea.example.com"
   token: "secret"
-checks:
-  - name: forbidden-files
-    type: file_blacklist
-    target_branches:
-      - "^main$"
-      - "^release/.*"
-    file_blacklist:
-      patterns:
-        - "go.sum"
-        - "vendor/**"
+repositories:
+  - name: "org/repo"
+    job_pattern: "^build$"
+    checks:
+      - name: forbidden-files
+        type: file_blacklist
+        target_branches:
+          - "^main$"
+          - "^release/.*"
+        file_blacklist:
+          patterns:
+            - "go.sum"
+            - "vendor/**"
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -353,10 +365,10 @@ checks:
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(cfg.Checks) != 1 {
-		t.Fatalf("checks = %d", len(cfg.Checks))
+	if len(cfg.Repositories) != 1 || len(cfg.Repositories[0].Checks) != 1 {
+		t.Fatalf("checks = %+v", cfg.Repositories)
 	}
-	ch := cfg.Checks[0]
+	ch := cfg.Repositories[0].Checks[0]
 	if ch.Type != config.CheckTypeFileBlacklist {
 		t.Fatalf("type = %s", ch.Type)
 	}
@@ -512,11 +524,52 @@ func TestCheckRule_MatchesTargetBranchWithoutValidate(t *testing.T) {
 	}
 }
 
+func TestValidate_RepositoryWithoutChecks(t *testing.T) {
+	cfg := &config.Config{
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j.example.com"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g.example.com", Token: "t"},
+		Repositories: []config.RepositoryRule{
+			{Name: "org/repo", JobPattern: "^x$"},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("checks may be absent: %v", err)
+	}
+	if cfg.Repositories[0].Checks != nil {
+		t.Fatalf("expected nil checks, got %+v", cfg.Repositories[0].Checks)
+	}
+}
+
+func TestValidate_ChecksSameNameDifferentRepos(t *testing.T) {
+	rule := config.CheckRule{
+		Name:           "forbidden",
+		Type:           config.CheckTypeFileBlacklist,
+		Context:        "checks/files",
+		TargetBranches: []string{"^main$"},
+		FileBlacklist:  &config.FileBlacklistCheck{Patterns: []string{"go.sum"}},
+	}
+	cfg := &config.Config{
+		Jenkins: config.JenkinsConfig{BaseURL: "https://j.example.com"},
+		Gitea:   config.GiteaConfig{BaseURL: "https://g.example.com", Token: "t"},
+		Repositories: []config.RepositoryRule{
+			{Name: "org/a", JobPattern: "^x$", Checks: []config.CheckRule{rule}},
+			{Name: "org/b", JobPattern: "^x$", Checks: []config.CheckRule{rule}},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("same check in different repositories is allowed: %v", err)
+	}
+}
+
 func checkConfig(rules ...config.CheckRule) *config.Config {
 	return &config.Config{
 		Jenkins: config.JenkinsConfig{BaseURL: "https://j.example.com"},
 		Gitea:   config.GiteaConfig{BaseURL: "https://g.example.com", Token: "t"},
-		Checks:  rules,
+		Repositories: []config.RepositoryRule{{
+			Name:       "org/repo",
+			JobPattern: "^x$",
+			Checks:     rules,
+		}},
 	}
 }
 

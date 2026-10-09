@@ -137,8 +137,8 @@ func (p *Processor) worker(id int) {
 }
 
 // processEvent обрабатывает одно событие pull request:
-// - выполняет проверки из конфигурации и публикует статус коммита
-// - проверяет наличие правил для репозитория
+// - проверяет наличие правила репозитория
+// - выполняет проверки этого репозитория и публикует статус коммита
 // - для Jenkins обрабатывает только события opened и reopened
 // - ожидает появления задачи Jenkins по шаблону
 // - публикует комментарий в Gitea с результатом
@@ -154,13 +154,13 @@ func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEve
 		return
 	}
 
-	p.runChecks(ctx, evt)
-
 	rule, ok := p.cfg.GetRepositoryRule(evt.Repository.FullName)
 	if !ok {
-		p.log.Info("repository not configured, skipping jenkins", "repo", evt.Repository.FullName)
+		p.log.Info("repository not configured, skipping", "repo", evt.Repository.FullName)
 		return
 	}
+
+	p.runChecks(ctx, evt, rule)
 
 	p.log.Debug("repository rule found",
 		"repo", evt.Repository.FullName,
@@ -275,10 +275,10 @@ func (p *Processor) processEvent(ctx context.Context, evt webhook.PullRequestEve
 	}
 }
 
-// runChecks выполняет проверки, привязанные к целевой ветке pull request,
+// runChecks выполняет проверки репозитория, привязанные к целевой ветке pull request,
 // и публикует результат статусом коммита head.
-func (p *Processor) runChecks(ctx context.Context, evt webhook.PullRequestEvent) {
-	if len(p.cfg.Checks) == 0 {
+func (p *Processor) runChecks(ctx context.Context, evt webhook.PullRequestEvent, rule config.RepositoryRule) {
+	if len(rule.Checks) == 0 {
 		return
 	}
 	if !isCheckAction(evt.Action) {
@@ -287,7 +287,7 @@ func (p *Processor) runChecks(ctx context.Context, evt webhook.PullRequestEvent)
 	}
 
 	base := evt.PullRequest.Base.Ref
-	applicable := checks.Applicable(p.cfg.Checks, base)
+	applicable := checks.Applicable(rule.Checks, base)
 	if len(applicable) == 0 {
 		p.log.Info("no checks match target branch",
 			"repo", evt.Repository.FullName,
